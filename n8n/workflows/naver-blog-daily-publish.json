@@ -1,0 +1,264 @@
+{
+  "name": "naver-blog-daily-publish",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 400],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cron", "expression": "30 9 * * *" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wait-jitter",
+      "name": "지터 대기 (±30분)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [420, 400],
+      "parameters": {
+        "amount": "={{ Math.floor(Math.random() * 60) }}",
+        "unit": "minutes"
+      }
+    },
+    {
+      "id": "if-brake",
+      "name": "긴급브레이크 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "leftValue": "={{ $getWorkflowStaticData('global').emergencyBrake === true }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "noop-brake-stop",
+      "name": "중단: 긴급브레이크",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [860, 280],
+      "parameters": {}
+    },
+    {
+      "id": "if-duplicate",
+      "name": "중복발행 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "leftValue": "={{ $getWorkflowStaticData('global').lastPublishedDate === new Date().toISOString().slice(0,10) }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "noop-dup-stop",
+      "name": "중단: 오늘 이미 발행함",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1080, 380],
+      "parameters": {}
+    },
+    {
+      "id": "code-keyword",
+      "name": "키워드 수집",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 600],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.1 daily-publish node 4 — 키워드 수집\n// ponytail: 네이버 데이터랩 Open API는 카테고리별 트렌드 검색어만 제공하고\n// 롱테일 키워드 자동완성은 공식 API가 없어 크롤링이 필요하다.\n// 1차 구현은 운영자가 n8n Set 노드/Static Data에 미리 넣어둔 후보 목록에서\n// 순차 선택하는 최소 버전으로 시작하고, 후보 소진 시 운영자가 보충한다.\n// 업그레이드 경로: 네이버 자동완성 비공식 엔드포인트 크롤링 노드 추가.\nconst staticData = $getWorkflowStaticData('global');\nconst pool = staticData.keywordPool || [];\nif (pool.length === 0) {\n  throw new Error('keywordPool이 비었습니다. Static Data에 후보 키워드를 채워주세요.');\n}\nconst keyword = pool.shift();\nstaticData.keywordPool = pool;\nreturn [{ json: { keyword } }];"
+      }
+    },
+    {
+      "id": "http-gemini",
+      "name": "Gemini 본문 생성",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-goog-api-key", "value": "={{ $credentials.geminiApi.apiKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `다음 키워드로 네이버 블로그 정보성 글을 자연스러운 한국어로 작성해줘. 매번 다른 문단 구조와 어투를 사용해. 키워드: ${$json.keyword}. 서론-본론-결론 구조, 모바일 가독성을 위해 문단은 3~4줄 이내, 질문-답변 형태 소제목 1개 이상 포함.` }] }] })}}"
+      }
+    },
+    {
+      "id": "code-extract-body",
+      "name": "본문 추출",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 600],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.1 node 5 — Gemini 응답에서 본문 텍스트 추출\nconst resp = $input.first().json;\nconst text = resp?.candidates?.[0]?.content?.parts?.[0]?.text;\nif (!text) {\n  throw new Error('Gemini 응답에서 본문을 추출하지 못했습니다: ' + JSON.stringify(resp).slice(0, 300));\n}\nreturn [{ json: { ...$('키워드 수집').first().json, body: text } }];"
+      }
+    },
+    {
+      "id": "http-nim",
+      "name": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "https://ai.api.nvidia.com/v1/genai/qwen/qwen-image",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.nimApi.apiKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일`, n: 1 }) }}"
+      }
+    },
+    {
+      "id": "code-checklist",
+      "name": "발행전 체크리스트",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 600],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\nconst imageUrl = imageResp?.data?.[0]?.url || imageResp?.images?.[0]?.url || null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
+      }
+    },
+    {
+      "id": "if-checklist",
+      "name": "체크리스트 통과?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2180, 600],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "telegram-checklist-fail",
+      "name": "텔레그램: 체크리스트 탈락 알림",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2400, 740],
+      "parameters": {
+        "chatId": "={{ $credentials.telegramApi.chatId }}",
+        "text": "=⚠️ [naver-blog] 발행전 체크리스트 탈락으로 오늘 발행을 스킵합니다.\\n키워드: {{ $json.keyword }}\\n체크 결과: {{ JSON.stringify($json.checks) }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": { "id": "TBD", "name": "telegram-naver-blog" }
+      }
+    },
+    {
+      "id": "code-affiliate-gate",
+      "name": "제휴비중 게이트",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 480],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.1 node 8 — 제휴비중 게이트 (module-4)\n// Plan FR-08: 로드맵 단계별 정보성/제휴성 비중(100/0 -> 80/20 -> 60~70/30~40)\n// ponytail: 실제 쇼핑커넥트 링크 삽입은 아직 커넥트 미연동이라 범위 밖.\n// 여기서는 isAffiliatePost 플래그만 결정해 Playwright 스크립트에 전달한다.\n// 연동 후 업그레이드 경로: isAffiliatePost=true일 때 Playwright 스크립트가\n// 셀러 제공 상품 이미지/링크를 본문에 삽입하도록 확장.\nconst staticData = $getWorkflowStaticData('global');\n\n// 운영자가 게이트 통과 후 수동으로 전환하는 값 (Design §5.2 User Flow 참조)\nif (!staticData.roadmapPhase) {\n  staticData.roadmapPhase = '지수성장기';\n}\nconst RATIO_BY_PHASE = {\n  '준비기': 0,\n  '지수성장기': 0,\n  '최적화진입': 20,\n  '운영': 35\n};\nconst affiliateRatio = RATIO_BY_PHASE[staticData.roadmapPhase] ?? 0;\nstaticData.affiliateRatio = affiliateRatio;\n\nconst isAffiliatePost = Math.random() * 100 < affiliateRatio;\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    roadmapPhase: staticData.roadmapPhase,\n    affiliateRatio,\n    isAffiliatePost\n  }\n}];"
+      }
+    },
+    {
+      "id": "code-save-draft",
+      "name": "콘텐츠 임시저장",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2620, 480],
+      "parameters": {
+        "jsCode": "// Design Ref: §2.2 Data Flow — 체크리스트 통과 콘텐츠를 Playwright 발행 단계로 전달\n// ponytail: n8n Execute Command 노드는 STDIN을 지원하지 않아 임시 파일로 전달한다.\n// 주의: 이 Code 노드는 Node.js 내장 모듈(fs/os/path)을 쓰므로, n8n 환경변수\n// NODE_FUNCTION_ALLOW_BUILTIN=fs,os,path 설정이 필요하다(SETUP.md 참조).\nconst fs = require('fs');\nconst os = require('os');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst filePath = path.join(os.tmpdir(), `naver-blog-draft-${Date.now()}.json`);\nfs.writeFileSync(filePath, JSON.stringify({\n  keyword: item.keyword,\n  body: item.body,\n  imageUrl: item.imageUrl,\n  isAffiliatePost: item.isAffiliatePost\n}));\n\nreturn [{ json: { ...item, draftFilePath: filePath } }];"
+      }
+    },
+    {
+      "id": "exec-publish",
+      "name": "Playwright 발행",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2840, 480],
+      "parameters": {
+        "command": "=node n8n/scripts/naver-publish.playwright.js \"{{ $json.draftFilePath }}\""
+      }
+    },
+    {
+      "id": "code-record-state",
+      "name": "상태 기록",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 480],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.1 node 10 — 상태 기록, Plan FR-07 중복 발행 방지\nconst staticData = $getWorkflowStaticData('global');\nstaticData.lastPublishedDate = new Date().toISOString().slice(0, 10);\nreturn $input.all();"
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger": { "main": [[{ "node": "지터 대기 (±30분)", "type": "main", "index": 0 }]] },
+    "지터 대기 (±30분)": { "main": [[{ "node": "긴급브레이크 확인", "type": "main", "index": 0 }]] },
+    "긴급브레이크 확인": {
+      "main": [
+        [{ "node": "중단: 긴급브레이크", "type": "main", "index": 0 }],
+        [{ "node": "중복발행 확인", "type": "main", "index": 0 }]
+      ]
+    },
+    "중복발행 확인": {
+      "main": [
+        [{ "node": "중단: 오늘 이미 발행함", "type": "main", "index": 0 }],
+        [{ "node": "키워드 수집", "type": "main", "index": 0 }]
+      ]
+    },
+    "키워드 수집": { "main": [[{ "node": "Gemini 본문 생성", "type": "main", "index": 0 }]] },
+    "Gemini 본문 생성": { "main": [[{ "node": "본문 추출", "type": "main", "index": 0 }]] },
+    "본문 추출": { "main": [[{ "node": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)", "type": "main", "index": 0 }]] },
+    "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
+    "발행전 체크리스트": { "main": [[{ "node": "체크리스트 통과?", "type": "main", "index": 0 }]] },
+    "체크리스트 통과?": {
+      "main": [
+        [{ "node": "제휴비중 게이트", "type": "main", "index": 0 }],
+        [{ "node": "텔레그램: 체크리스트 탈락 알림", "type": "main", "index": 0 }]
+      ]
+    },
+    "제휴비중 게이트": { "main": [[{ "node": "콘텐츠 임시저장", "type": "main", "index": 0 }]] },
+    "콘텐츠 임시저장": { "main": [[{ "node": "Playwright 발행", "type": "main", "index": 0 }]] },
+    "Playwright 발행": { "main": [[{ "node": "상태 기록", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

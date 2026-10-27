@@ -1,0 +1,105 @@
+{
+  "name": "naver-blog-monitor-alert",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "name": "Daily Stats Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cron", "expression": "0 9 * * *" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "exec-1",
+      "name": "Run Stats Script",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "command": "node n8n/scripts/naver-stats.playwright.js"
+      }
+    },
+    {
+      "id": "code-parse",
+      "name": "Parse & Compare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.2 monitor-alert node 3 — 급락 판정\n// Plan SC: 일일 모니터링(방문자/검색유입 전일대비 50%+ 급락 감지)\nconst staticData = $getWorkflowStaticData('global');\n\nconst stdout = $input.first().json.stdout || '{}';\nlet today;\ntry {\n  today = JSON.parse(stdout);\n} catch (e) {\n  throw new Error('naver-stats.playwright.js stdout이 JSON이 아님: ' + stdout);\n}\n\nconst prev = staticData.lastStats || null;\n\nfunction dropRate(prevVal, curVal) {\n  if (!prevVal || prevVal <= 0) return 0;\n  return (prevVal - curVal) / prevVal;\n}\n\nconst visitorsDrop = prev ? dropRate(prev.visitors, today.visitors) : 0;\nconst inflowDrop = prev ? dropRate(prev.searchInflow, today.searchInflow) : 0;\nconst maxDrop = Math.max(visitorsDrop, inflowDrop);\n\n// 오늘 수치를 다음 비교 기준으로 저장 (ponytail: 급락 오탐 방지를 위한 2일 연속 확인 등은\n// 현재 범위 밖, 운영 중 오탐 많으면 §5 Risks 참조해 추가)\nstaticData.lastStats = {\n  visitors: today.visitors,\n  searchInflow: today.searchInflow,\n  date: today.date\n};\n\nreturn [{\n  json: {\n    today,\n    previous: prev,\n    visitorsDrop,\n    inflowDrop,\n    isCritical: maxDrop >= 0.5\n  }\n}];"
+      }
+    },
+    {
+      "id": "if-critical",
+      "name": "급락 판정",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isCritical }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "telegram-alert",
+      "name": "텔레그램 알림",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 200],
+      "parameters": {
+        "chatId": "={{ $credentials.telegramApi.chatId }}",
+        "text": "=⚠️ [naver-blog] 저품질 급락 감지\\n방문자 하락률: {{ Math.round($json.visitorsDrop * 100) }}%\\n검색유입 하락률: {{ Math.round($json.inflowDrop * 100) }}%\\n발행 자동화를 긴급 중단합니다. 최근 발행 글을 검토해주세요.",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": { "id": "TBD", "name": "telegram-naver-blog" }
+      }
+    },
+    {
+      "id": "code-brake",
+      "name": "긴급브레이크 ON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200],
+      "parameters": {
+        "jsCode": "// Design Ref: §4.2 monitor-alert node 5 — 긴급브레이크 설정\n// daily-publish 워크플로우가 이 플래그를 읽고 즉시 종료한다 (§6.1 Error Handling)\nconst staticData = $getWorkflowStaticData('global');\nstaticData.emergencyBrake = true;\nreturn $input.all();"
+      }
+    },
+    {
+      "id": "noop-normal",
+      "name": "정상 (조치 없음)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1120, 420],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Daily Stats Check": { "main": [[{ "node": "Run Stats Script", "type": "main", "index": 0 }]] },
+    "Run Stats Script": { "main": [[{ "node": "Parse & Compare", "type": "main", "index": 0 }]] },
+    "Parse & Compare": { "main": [[{ "node": "급락 판정", "type": "main", "index": 0 }]] },
+    "급락 판정": {
+      "main": [
+        [{ "node": "텔레그램 알림", "type": "main", "index": 0 }],
+        [{ "node": "정상 (조치 없음)", "type": "main", "index": 0 }]
+      ]
+    },
+    "텔레그램 알림": { "main": [[{ "node": "긴급브레이크 ON", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
