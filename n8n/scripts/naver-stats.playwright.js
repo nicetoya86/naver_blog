@@ -28,7 +28,11 @@ async function main() {
     await page.click('.btn_login');
     await page.waitForLoadState('networkidle');
 
-    // TODO: 실제 로그인 성공 여부(캡차/2FA 발생) 체크 로직 보강 필요 — Design §6.1 LOGIN_FAIL 참조
+    // 로그인 실패(캡차/2FA 포함) 시 nidlogin 페이지에 그대로 남는다 — Design §6.1 LOGIN_FAIL
+    if (page.url().includes('nidlogin')) {
+      throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
+    }
+
     await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/home/visitstat`);
     await page.waitForLoadState('networkidle');
 
@@ -45,6 +49,10 @@ async function main() {
       visitors: parseInt(visitors.replace(/[^0-9]/g, ''), 10),
       searchInflow: parseInt(searchInflow.replace(/[^0-9]/g, ''), 10)
     };
+
+    if (Number.isNaN(result.visitors) || Number.isNaN(result.searchInflow)) {
+      throw new Error('STATS_FETCH_FAIL: 통계 값을 숫자로 파싱하지 못했습니다 (페이지 구조 변경 가능성). visitors="' + visitors + '" searchInflow="' + searchInflow + '"');
+    }
 
     process.stdout.write(JSON.stringify(result));
   } finally {

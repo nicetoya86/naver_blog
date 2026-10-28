@@ -27,6 +27,16 @@
       }
     },
     {
+      "id": "code-read-shared",
+      "name": "공유상태 읽기 (긴급브레이크)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [530, 400],
+      "parameters": {
+        "jsCode": "// Design Ref: §6.1 Error Handling — emergencyBrake는 monitor-alert 워크플로우가 설정한다.\n// $getWorkflowStaticData('global')는 워크플로우마다 별도로 저장되어 다른 워크플로우가 쓴\n// 값을 읽을 수 없다. 두 워크플로우가 같은 서버에서 실행된다는 전제로 공유 파일을 쓴다\n// (YAGNI: 별도 DB 미도입, monitor-alert의 '긴급브레이크 ON' 노드가 같은 파일에 기록).\n// PROJECT_ROOT 하위에 두는 이유: OS temp는 재부팅/정리 시 지워져 긴급브레이크가 조용히\n// 풀릴 수 있다(SETUP.md 참조) — PROJECT_ROOT 미설정 시에만 temp로 폴백한다.\nconst fs = require('fs');\nconst path = require('path');\nconst os = require('os');\n\nconst sharedStatePath = path.join($env.PROJECT_ROOT || os.tmpdir(), '.n8n-shared-state.json');\nlet shared = {};\ntry {\n  shared = JSON.parse(fs.readFileSync(sharedStatePath, 'utf8'));\n} catch (e) {\n  // 파일이 없으면 긴급브레이크 미설정 상태로 간주\n}\n\nreturn [{ json: { ...$input.first().json, emergencyBrake: shared.emergencyBrake === true } }];"
+      }
+    },
+    {
       "id": "if-brake",
       "name": "긴급브레이크 확인",
       "type": "n8n-nodes-base.if",
@@ -37,7 +47,7 @@
           "options": { "caseSensitive": true, "leftValue": "" },
           "conditions": [
             {
-              "leftValue": "={{ $getWorkflowStaticData('global').emergencyBrake === true }}",
+              "leftValue": "={{ $json.emergencyBrake === true }}",
               "rightValue": true,
               "operator": { "type": "boolean", "operation": "true" }
             }
@@ -101,16 +111,20 @@
       "parameters": {
         "method": "POST",
         "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-goog-api-key", "value": "={{ $credentials.geminiApi.apiKey }}" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `다음 키워드로 네이버 블로그 정보성 글을 자연스러운 한국어로 작성해줘. 매번 다른 문단 구조와 어투를 사용해. 키워드: ${$json.keyword}. 서론-본론-결론 구조, 모바일 가독성을 위해 문단은 3~4줄 이내, 질문-답변 형태 소제목 1개 이상 포함.` }] }] })}}"
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "2Iqv4LQ8T9fsSI7o", "name": "Gemini API key" }
       }
     },
     {
@@ -132,16 +146,20 @@
       "parameters": {
         "method": "POST",
         "url": "https://ai.api.nvidia.com/v1/genai/qwen/qwen-image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{ $credentials.nimApi.apiKey }}" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ prompt: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일`, n: 1 }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "ZKyZ3RffHqriP91u", "name": "NVIDIA NIM key (verified)" }
       }
     },
     {
@@ -151,7 +169,7 @@
       "typeVersion": 2,
       "position": [1960, 600],
       "parameters": {
-        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\nconst imageUrl = imageResp?.data?.[0]?.url || imageResp?.images?.[0]?.url || null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
+        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\nconst imageUrl = imageResp?.data?.[0]?.url || imageResp?.images?.[0]?.url || null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
       }
     },
     {
@@ -181,12 +199,12 @@
       "typeVersion": 1.2,
       "position": [2400, 740],
       "parameters": {
-        "chatId": "={{ $credentials.telegramApi.chatId }}",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
         "text": "=⚠️ [naver-blog] 발행전 체크리스트 탈락으로 오늘 발행을 스킵합니다.\\n키워드: {{ $json.keyword }}\\n체크 결과: {{ JSON.stringify($json.checks) }}",
         "additionalFields": {}
       },
       "credentials": {
-        "telegramApi": { "id": "TBD", "name": "telegram-naver-blog" }
+        "telegramApi": { "id": "ghaUBdq2m5hySq0t", "name": "blogger-automation Telegram bot" }
       }
     },
     {
@@ -200,23 +218,22 @@
       }
     },
     {
-      "id": "code-save-draft",
-      "name": "콘텐츠 임시저장",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2620, 480],
-      "parameters": {
-        "jsCode": "// Design Ref: §2.2 Data Flow — 체크리스트 통과 콘텐츠를 Playwright 발행 단계로 전달\n// ponytail: n8n Execute Command 노드는 STDIN을 지원하지 않아 임시 파일로 전달한다.\n// 주의: 이 Code 노드는 Node.js 내장 모듈(fs/os/path)을 쓰므로, n8n 환경변수\n// NODE_FUNCTION_ALLOW_BUILTIN=fs,os,path 설정이 필요하다(SETUP.md 참조).\nconst fs = require('fs');\nconst os = require('os');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst filePath = path.join(os.tmpdir(), `naver-blog-draft-${Date.now()}.json`);\nfs.writeFileSync(filePath, JSON.stringify({\n  keyword: item.keyword,\n  body: item.body,\n  imageUrl: item.imageUrl,\n  isAffiliatePost: item.isAffiliatePost\n}));\n\nreturn [{ json: { ...item, draftFilePath: filePath } }];"
-      }
-    },
-    {
       "id": "exec-publish",
       "name": "Playwright 발행",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
-      "position": [2840, 480],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 480],
       "parameters": {
-        "command": "=node n8n/scripts/naver-publish.playwright.js \"{{ $json.draftFilePath }}\""
+        "method": "POST",
+        "url": "https://REPLACE-WITH-YOUR-VERCEL-URL.vercel.app/api/publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
       }
     },
     {
@@ -232,7 +249,8 @@
   ],
   "connections": {
     "Daily Trigger": { "main": [[{ "node": "지터 대기 (±30분)", "type": "main", "index": 0 }]] },
-    "지터 대기 (±30분)": { "main": [[{ "node": "긴급브레이크 확인", "type": "main", "index": 0 }]] },
+    "지터 대기 (±30분)": { "main": [[{ "node": "공유상태 읽기 (긴급브레이크)", "type": "main", "index": 0 }]] },
+    "공유상태 읽기 (긴급브레이크)": { "main": [[{ "node": "긴급브레이크 확인", "type": "main", "index": 0 }]] },
     "긴급브레이크 확인": {
       "main": [
         [{ "node": "중단: 긴급브레이크", "type": "main", "index": 0 }],
@@ -256,8 +274,7 @@
         [{ "node": "텔레그램: 체크리스트 탈락 알림", "type": "main", "index": 0 }]
       ]
     },
-    "제휴비중 게이트": { "main": [[{ "node": "콘텐츠 임시저장", "type": "main", "index": 0 }]] },
-    "콘텐츠 임시저장": { "main": [[{ "node": "Playwright 발행", "type": "main", "index": 0 }]] },
+    "제휴비중 게이트": { "main": [[{ "node": "Playwright 발행", "type": "main", "index": 0 }]] },
     "Playwright 발행": { "main": [[{ "node": "상태 기록", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }

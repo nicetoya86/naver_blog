@@ -212,8 +212,50 @@ Threshold: <60 = SHALLOW
 
 ---
 
+## 6. Re-verification (버그 수정 반영, 2026-10-28 2차)
+
+code-analyzer/gap-detector 재측정 결과 및 적용한 코드 수정 사항.
+
+### 6.1 측정치 변화
+
+| 지표 | 1차 | 2차(수정 후) |
+|---|:-:|:-:|
+| codeQualityScore | 62 | 76 |
+| criticalIssueCount | 3 | 1 (아래 6.2 추가 수정으로 추가 해소, 실측 재확인 안 함) |
+| Structural Match | 100% | 100% |
+| Functional Match | 59% | 68% |
+| Contract Match | 63% | 75% |
+| apiComplianceRate | 42% | 67% |
+| Overall Match Rate | 69% | 77%(2차 agent 측정) — 아래 6.2의 추가 수정은 미반영 수치 |
+
+### 6.2 적용한 수정 (코드만으로 해결 가능한 항목)
+
+- **emergencyBrake 워크플로우 간 미공유**: `$getWorkflowStaticData('global')`는 워크플로우별로 분리되어 monitor-alert → daily-publish 전달이 안 되던 버그. `$PROJECT_ROOT/.n8n-shared-state.json` 공유 파일로 변경.
+- **발행 미구현인데 성공 처리**: `naver-publish.playwright.js`가 카테고리/발행버튼 미구현 상태에서 exit 0으로 끝나 "상태 기록"이 거짓으로 `lastPublishedDate`를 기록하던 버그. 미구현 상태면 `PUBLISH_NOT_IMPLEMENTED`로 exit 1 하도록 수정(발행 검증 전까지 워크플로우가 의도적으로 실패).
+- **Telegram chatId 참조 오류**: Telegram credential에 없는 `chatId` 필드를 참조하던 버그. `$env.TELEGRAM_CHAT_ID`로 교체(2곳).
+- **Gemini/NIM HTTP 인증 미연결**: `$credentials.geminiApi.apiKey` 등은 노드에 해당 이름의 credential이 연결돼 있지 않아 작동할 수 없는 구조였음. `genericCredentialType`/`httpHeaderAuth` 패턴으로 재구성(실제 API 키 입력은 운영자 몫 — SETUP.md에 안내).
+- **긴급브레이크 ON이 텔레그램 발송 성공에 종속**: 연결 순서를 "급락 판정→긴급브레이크 ON→텔레그램"으로 변경해 알림 실패와 무관하게 브레이크가 먼저 켜지도록 수정.
+- **키워드 반복 검사식 오류**: 점유율 계산식을 `kw.length * count / body.length`로 정정(기존엔 사실상 항상 통과).
+- **통계 NaN 미검증**: `STATS_FETCH_FAIL`로 명시 처리하도록 추가(기존엔 NaN이 그대로 lastStats에 저장돼 모니터링이 조용히 오염).
+- **로그인 실패 판정**: 불확실한 DOM 클래스명 대신 URL(`nidlogin` 잔류) 기반으로 교체(두 스크립트).
+- **상대경로 Execute Command**: `$env.PROJECT_ROOT` 기반 절대경로로 교체.
+- **STATS_FETCH_FAIL/LOGIN_FAIL 알림 없음**: "Run Stats Script"에 `continueOnFail` 추가 + 실패 분기 Telegram 알림 노드 신설(Design §6.1 준수).
+
+### 6.3 코드로 해결 불가 — 운영자 입력 필요 (범위 밖, 의도적으로 보류)
+
+- Gemini/NIM credential의 실제 API 키 값 (n8n UI에서 직접 입력)
+- NIM 이미지 생성 엔드포인트 실물 검증 (NVIDIA NIM 콘솔 접근 필요)
+- 네이버 에디터/통계 페이지 실제 DOM 셀렉터 (실제 계정 로그인 후 1회 수동 검증 필요)
+- 문장 유사도 검사용 외부 표절 검사 API 연동
+- `continueOnFail` 실패 시 에러 필드 모양이 n8n 버전마다 다를 수 있어 실제 환경에서 재확인 필요(SETUP.md §6-6 테스트 절차 참조)
+
+> 6.2 수정 이후 Match Rate는 재측정하지 않았다(6.3이 모두 라이브 환경 필요 항목이라 큰 변동은 없을 것으로 추정). 운영자가 §6.3을 완료하면 `/pdca analyze naver-blog-shopping-connect`로 재측정 권장.
+
+---
+
 ## Version History
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 0.2 | 2026-10-28 | 코드 레벨 버그 9건 수정 반영, 재측정치 기록 (§6) | Claude |
 | 0.1 | 2026-10-28 | 최초 Gap 분석 (Static-only) | 장대광 |

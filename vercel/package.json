@@ -1,0 +1,8 @@
+{
+  "name": "naver-blog-automation-api",
+  "private": true,
+  "dependencies": {
+    "playwright-core": "1.48.2",
+    "@sparticuz/chromium": "131.0.1"
+  }
+}

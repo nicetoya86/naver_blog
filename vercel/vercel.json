@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/stats.js": { "maxDuration": 60 },
+    "api/publish.js": { "maxDuration": 60 }
+  }
+}

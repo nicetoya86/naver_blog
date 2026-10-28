@@ -46,9 +46,9 @@ async function main() {
     await page.click('.btn_login');
     await page.waitForLoadState('networkidle');
 
-    // TODO: 캡차/2FA 발생 여부 감지 로직 보강 필요 (Design §6.1 LOGIN_FAIL)
-    const loggedIn = await page.locator('.MyView-module__link_login___HpHMW').count().catch(() => 0);
-    if (loggedIn > 0) {
+    // 로그인 실패(캡차/2FA 포함) 시 nidlogin 페이지에 그대로 남는다 — DOM 클래스명보다
+    // URL 기반 판정이 네이버 UI 변경에 더 강건하다 (Design §6.1 LOGIN_FAIL)
+    if (page.url().includes('nidlogin')) {
       throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
     }
 
@@ -69,8 +69,10 @@ async function main() {
     }
 
     // TODO: 카테고리 선택, 발행 버튼 클릭 — 실제 에디터 UI에 맞춰 구현 필요.
-
-    process.stdout.write(JSON.stringify({ status: 'draft_prepared', keyword, isAffiliatePost: !!isAffiliatePost }));
+    // 발행 버튼 클릭이 구현되기 전까지는 성공(exit 0)으로 끝내면 안 된다 — n8n의
+    // "상태 기록" 노드가 실제로 발행되지 않은 글을 발행된 것으로 기록해 키워드가
+    // 소진되고 중복발행 방지 로직이 오작동한다.
+    throw new Error('PUBLISH_NOT_IMPLEMENTED: 카테고리 선택/발행 버튼 클릭이 아직 구현되지 않았습니다 — 실제 에디터 셀렉터 검증 후 구현 필요(SETUP.md §5 참조)');
   } finally {
     await browser.close();
     fs.unlink(draftFilePath, () => {});
