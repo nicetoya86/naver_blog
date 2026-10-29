@@ -253,9 +253,35 @@ code-analyzer/gap-detector 재측정 결과 및 적용한 코드 수정 사항.
 
 ---
 
+## 7. Re-verification (Vercel 전환 후속 버그 수정, 2026-10-29)
+
+같은 세션의 "n8n Execute Command를 Vercel 서버리스 API로 전환" 작업(`5f861b2`)이 Execute Command만 Vercel로 옮기고, **§6.2에서 추가한 `emergencyBrake` 공유 파일 방식은 그대로 남겨둔 것**을 발견해 수정.
+
+### 7.1 발견한 결함
+
+n8n Cloud가 Execute Command 노드를 지원하지 않는다는 사실이 확인된 이상, 같은 샌드박스 정책상 Code 노드의 `fs`/`os`/`path` 접근도 막혀있을 가능성이 높다(SETUP.md §3.1-구버전에서도 "n8n Cloud 사용 시 지원 안 될 수 있음"으로 이미 명시됐던 항목). 즉 §6.2에서 추가한 "공유상태 읽기 (긴급브레이크)"/"긴급브레이크 ON" 두 Code 노드(`$PROJECT_ROOT/.n8n-shared-state.json` 파일 I/O)는 n8n Cloud에서 실행 시점에 에러로 멈출 가능성이 높은 신규 결함이었다 — 긴급브레이크가 두 워크플로우 간 전혀 전파되지 않는 silent failure 위험.
+
+### 7.2 적용한 수정
+
+- `vercel/api/state.js` 신규: `vercel/lib/edgeConfig.js`(Vercel Edge Config)를 통해 emergencyBrake를 GET/POST로 공유. 이미 채택된 "n8n Cloud 제약은 Vercel로 우회" 패턴을 그대로 재사용(새 외부 서비스 없음, Vercel 프로젝트 내 Edge Config는 무료 티어 포함).
+- `naver-blog-daily-publish.json`의 "공유상태 읽기 (긴급브레이크)": Code 노드(fs 읽기) → HTTP Request(GET `/api/state`)로 교체.
+- `naver-blog-monitor-alert.json`의 "긴급브레이크 ON": Code 노드(fs 쓰기) → HTTP Request(POST `/api/state`, `continueOnFail: true`)로 교체. Telegram 알림보다 먼저 호출되는 순서(§6.2에서 정한 "브레이크 먼저, 알림은 그 다음")는 그대로 유지.
+- `n8n/SETUP.md`: `PROJECT_ROOT`/`NODE_FUNCTION_ALLOW_BUILTIN=fs,os,path` 요구사항 제거(더 이상 어떤 Code 노드도 fs/os/path를 쓰지 않음), Vercel Edge Config 설정 절차(§3.1) 신규 추가, 중복돼 있던 두 개의 "### 6." 제목 정리.
+- `.gitignore`의 `.n8n-shared-state.json` 항목 제거(더 이상 생성되지 않는 파일).
+
+### 7.3 코드로 해결 불가 — 운영자 입력 필요
+
+- Vercel 대시보드에서 Edge Config 생성·Connect, API 토큰 발급(`VERCEL_API_TOKEN`, `EDGE_CONFIG_ID`) — SETUP.md §3.1 참조
+- 두 워크플로우 HTTP Request 노드의 `url`을 실제 배포된 Vercel URL로 교체(기존부터 있던 TODO와 동일 작업)
+
+> 이번 수정도 §6.3과 마찬가지로 라이브 환경(Vercel 배포, 실제 Edge Config) 없이는 런타임 검증이 불가능하다. Static 분석 관점에서는 "코드가 가리키는 두 엔드포인트의 계약이 일치한다"(state.js가 반환하는 `{emergencyBrake}` 필드명이 IF 노드가 읽는 `$json.emergencyBrake`와 일치)는 점만 확인했다.
+
+---
+
 ## Version History
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 0.3 | 2026-10-29 | Vercel 전환 후 emergencyBrake 공유 방식이 n8n Cloud에서 깨지는 결함 수정 (§7) | Claude |
 | 0.2 | 2026-10-28 | 코드 레벨 버그 9건 수정 반영, 재측정치 기록 (§6) | Claude |
 | 0.1 | 2026-10-28 | 최초 Gap 분석 (Static-only) | 장대광 |

@@ -3,6 +3,7 @@
   "private": true,
   "dependencies": {
     "playwright-core": "1.48.2",
-    "@sparticuz/chromium": "131.0.1"
+    "@sparticuz/chromium": "131.0.1",
+    "@vercel/edge-config": "1.4.0"
   }
 }

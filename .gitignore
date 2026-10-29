@@ -1,5 +1,4 @@
 .bkit/
 .claude/
 node_modules/
-.n8n-shared-state.json
 .env
