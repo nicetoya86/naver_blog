@@ -31,10 +31,10 @@ Telegram Bot 생성: [@BotFather](https://t.me/BotFather)에서 `/newbot`으로 
 
 n8n Cloud는 Code 노드의 `fs`/`os`/`path` 접근도 차단하므로(Execute Command 미지원과 같은 샌드박스 정책), 기존에 썼던 "공유 파일(`$PROJECT_ROOT/.n8n-shared-state.json`)" 방식은 동작하지 않는다. 두 워크플로우 모두 "긴급브레이크 ON"/"공유상태 읽기" 노드가 `vercel/api/state.js`(새 엔드포인트, Vercel Edge Config 기반)를 HTTP Request로 호출하도록 바뀌었다. Vercel 프로젝트에서 1회 설정 필요:
 
-1. Vercel 대시보드 → Storage → Edge Config 생성 → 이 프로젝트에 Connect(자동으로 `EDGE_CONFIG` 환경변수가 주입됨)
-2. Vercel 대시보드 → Settings → Tokens에서 API 토큰 발급(Edge Config 쓰기 권한 필요) → 프로젝트 환경변수에 `VERCEL_API_TOKEN`으로 등록
-3. 생성된 Edge Config의 ID(URL의 `ecfg_...`)를 프로젝트 환경변수 `EDGE_CONFIG_ID`로 등록
-4. 팀(Team) 계정에서 만들었다면 `VERCEL_TEAM_ID`도 등록(개인 계정이면 불필요)
+1. Vercel 대시보드 → Storage → Edge Config 생성(최근 UI에서는 "Global Config"로 표시되기도 함, 같은 기능) → 이 프로젝트에 Connect(자동으로 `EDGE_CONFIG` 또는 `GLOBAL_CONFIG` 환경변수가 주입됨 — `vercel/lib/edgeConfig.js`가 둘 다 인식하므로 이름은 신경 쓰지 않아도 됨)
+2. Vercel 대시보드 → Settings → Tokens에서 API 토큰 발급(계정 전체 쓰기 권한) → 프로젝트 환경변수에 `VERCEL_API_TOKEN`으로 등록
+3. 생성된 Edge/Global Config의 ID(URL의 `ecfg_...`)를 프로젝트 환경변수 `EDGE_CONFIG_ID`로 등록
+4. 팀(Team) 계정에서 만들었다면 `VERCEL_TEAM_ID`도 등록(개인 Hobby 계정이면 불필요)
 5. 두 n8n 워크플로우의 "공유상태 읽기"/"긴급브레이크 ON" 노드 `url`을 실제 Vercel URL(`.../api/state`)로 교체
 
 ### 4. Playwright 설치

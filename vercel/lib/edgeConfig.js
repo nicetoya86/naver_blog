@@ -3,10 +3,20 @@
 // 공유 파일(`$PROJECT_ROOT/.n8n-shared-state.json`)로 emergencyBrake를 주고받던 기존 방식은
 // n8n Cloud에서 동작하지 않는다. 새 외부 서비스를 추가하는 대신, 이미 쓰고 있는 Vercel
 // 프로젝트의 Edge Config(소규모 키-값 공유 저장소, 무료 티어 포함)를 재사용한다.
-const { get } = require('@vercel/edge-config');
+const { createClient } = require('@vercel/edge-config');
+
+// Vercel이 "Edge Config"를 "Global Config"로 리브랜딩하면서 프로젝트에 연결 시
+// 자동 주입되는 환경변수 이름이 EDGE_CONFIG가 아니라 GLOBAL_CONFIG로 나오는 경우가 있다.
+// @vercel/edge-config의 기본 get()은 EDGE_CONFIG만 찾으므로, 둘 중 있는 값으로 직접
+// 클라이언트를 만들어 이름 차이에 구애받지 않게 한다.
+const connectionString = process.env.EDGE_CONFIG || process.env.GLOBAL_CONFIG;
+const client = connectionString ? createClient(connectionString) : null;
 
 async function getEmergencyBrake() {
-  const value = await get('emergencyBrake');
+  if (!client) {
+    throw new Error('EDGE_CONFIG 또는 GLOBAL_CONFIG 환경변수가 없습니다 (n8n/SETUP.md §3.1 참조).');
+  }
+  const value = await client.get('emergencyBrake');
   return value === true;
 }
 

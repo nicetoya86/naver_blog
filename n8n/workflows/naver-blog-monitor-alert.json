@@ -23,7 +23,7 @@
       "position": [460, 300],
       "parameters": {
         "method": "GET",
-        "url": "https://REPLACE-WITH-YOUR-VERCEL-URL.vercel.app/api/stats",
+        "url": "https://naverblog-vercel.vercel.app/api/stats",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth"
       },
@@ -120,7 +120,7 @@
       "position": [1340, 200],
       "parameters": {
         "method": "POST",
-        "url": "https://REPLACE-WITH-YOUR-VERCEL-URL.vercel.app/api/state",
+        "url": "https://naverblog-vercel.vercel.app/api/state",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
