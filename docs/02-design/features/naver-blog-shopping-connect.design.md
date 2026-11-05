@@ -155,7 +155,7 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 | 3 | 중복발행 확인 | IF | `lastPublishedDate === today`면 종료 |
 | 4 | 키워드 수집 | HTTP Request / Function | 네이버 데이터랩·자동완성 API 또는 크롤링 |
 | 5 | 본문 생성 | HTTP Request(Gemini API) | 매번 다른 구조/어투 프롬프트 변주 |
-| 6 | 이미지 생성 | HTTP Request(NIM FLUX.1-schnell; Qwen-Image는 호스팅 API 없어 교체) | 지수성장기: 개념 이미지, 쇼핑커넥트 이후: 셀러 제공 이미지로 분기 |
+| 6 | 이미지 생성 | HTTP Request(Gemini 이미지; NIM Qwen-Image/FLUX는 호스팅 불가로 교체) | 지수성장기: 개념 이미지, 쇼핑커넥트 이후: 셀러 제공 이미지로 분기 |
 | 7 | 발행전 체크리스트 | Function | 최소 글자수/사진개수/유사도/키워드반복 검사 → Fail시 중단+텔레그램 알림 |
 | 8 | 제휴비중 게이트 | Function | `affiliateRatio` 조회해 이번 글을 정보성/제휴성 중 무엇으로 생성할지 결정 |
 | 9 | Playwright 발행 | Execute Command / Code | 네이버 블로그 에디터 로그인 후 발행 |

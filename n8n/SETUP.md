@@ -104,7 +104,7 @@ Vercel 배포 시 `vercel/package.json`의 `playwright-core`/`@sparticuz/chromiu
 - `vercel/api/publish.js`: 스마트에디터 ONE 셀렉터(제목/본문/이미지/발행 패널/최종 발행)는 실제 DOM에서 확인해 구현했다(카테고리는 기본값). **단, 실발행 런타임 테스트는 미수행** — Vercel IP에서 네이버 로그인이 캡차/2FA로 막힐 수 있고(`LOGIN_FAIL`), 에디터 셀렉터는 네이버 배포로 바뀔 수 있다. 첫 실행은 반드시 수동 1회로 검증하고, 검증 전에는 Cron을 켜지 말 것. 발행 성공은 글 URL로 이동했을 때만 `{ok:true}`를 반환한다.
 - **비공개 시험 모드**: "Playwright 발행" 노드 jsonBody에 `visibility: 'private'`가 들어 있어 현재 모든 발행이 비공개다. 수동 검증 통과 후 이 필드를 제거하면 전체공개로 발행된다.
 - 체크리스트의 "타 사이트 문장 유사도" 검사 — 외부 표절 검사 API(예: Copyscape) 연동 필요, 현재는 항상 통과 처리
-- **NIM 이미지 생성**: Qwen-Image NIM은 NVIDIA 호스팅 API가 없어(셀프호스팅 전용) FLUX.1-schnell(`ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell`, 미인증 호출 시 401로 엔드포인트 존재 확인)로 교체했다. 응답은 `artifacts[0].base64`(JPEG)이며 체크리스트 노드가 data URI로 변환해 `imageUrl`로 전달한다. 1024x1024/steps 4만 지원. **상업적 이용 조건은 NVIDIA API Trial ToS + BFL FLUX.1-schnell(Apache 2.0, HF 카드) 기준이며 운영자가 go-live 전 직접 확인할 것. 실제 호출(키 포함) 런타임 검증은 미수행.**
+- **이미지 생성**: NVIDIA 호스팅 Qwen-Image는 없고(셀프호스팅 전용), 호스팅 FLUX.1-schnell은 요청이 응답 없이 끊겨(2026-11 실측, 90초 이상 무응답) Gemini 이미지 생성(`gemini-2.5-flash-image`, 기존 Gemini credential)으로 교체했다. 응답은 `candidates[0].content.parts[].inlineData`(base64)이며 체크리스트 노드가 data URI로 변환해 `imageUrl`로 전달한다. NIM credential/키는 더 이상 쓰지 않는다.
 - `제휴비중 게이트` 노드는 플래그만 결정하며, 실제 상품 링크/이미지 삽입은 쇼핑커넥트 연동 후 구현(§module-4 참조)
 
 ### 6. 동작 확인
