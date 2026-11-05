@@ -30,7 +30,7 @@ module.exports = async (req, res) => {
     await page.goto('https://nid.naver.com/nidlogin.login');
     await page.fill('#id', NAVER_ID);
     await page.fill('#pw', NAVER_PW);
-    await page.click('#loginBtn_column, #loginBtn_row');
+    await page.press('#pw', 'Enter');
     await page.waitForLoadState('networkidle');
 
     if (page.url().includes('nidlogin')) {
