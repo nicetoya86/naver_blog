@@ -19,7 +19,7 @@ module.exports = async (req, res) => {
     await page.goto('https://nid.naver.com/nidlogin.login');
     await page.fill('#id', NAVER_ID);
     await page.fill('#pw', NAVER_PW);
-    await page.click('.btn_login');
+    await page.click('#loginBtn_column, #loginBtn_row');
     await page.waitForLoadState('networkidle');
 
     // 로그인 실패(캡차/2FA 포함) 시 nidlogin 페이지에 그대로 남는다
