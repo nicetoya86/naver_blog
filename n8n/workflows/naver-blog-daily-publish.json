@@ -162,7 +162,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `${$json.keyword} 관련 블로그 개념 이미지, 사실적 스타일, 글자 없음` }] }], generationConfig: { responseModalities: ['IMAGE'] } }) }}",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `A realistic editorial photo that illustrates the blog topic: ${$json.keyword}. No text, no letters, no watermark.` }] }], generationConfig: { responseModalities: ['IMAGE'] } }) }}",
         "options": { "timeout": 90000 }
       },
       "credentials": {
@@ -206,7 +206,7 @@
       "typeVersion": 1.2,
       "position": [2400, 740],
       "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "chatId": "523002062",
         "text": "=⚠️ [naver-blog] 발행전 체크리스트 탈락으로 오늘 발행을 스킵합니다.\\n키워드: {{ $json.keyword }}\\n체크 결과: {{ JSON.stringify($json.checks) }}",
         "additionalFields": {}
       },

@@ -59,7 +59,7 @@
       "typeVersion": 1.2,
       "position": [680, 180],
       "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "chatId": "523002062",
         "text": "=⚠️ [naver-blog] 통계 수집 스크립트 실패(LOGIN_FAIL 또는 STATS_FETCH_FAIL).\\n오늘 급락 모니터링을 건너뜁니다. 로그를 확인해주세요.\\n에러: {{ JSON.stringify($json.error) }}",
         "additionalFields": {}
       },
@@ -104,7 +104,7 @@
       "typeVersion": 1.2,
       "position": [1120, 200],
       "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "chatId": "523002062",
         "text": "=⚠️ [naver-blog] 저품질 급락 감지\\n방문자 하락률: {{ Math.round($json.visitorsDrop * 100) }}%\\n검색유입 하락률: {{ Math.round($json.inflowDrop * 100) }}%\\n발행 자동화를 긴급 중단합니다. 최근 발행 글을 검토해주세요.",
         "additionalFields": {}
       },
