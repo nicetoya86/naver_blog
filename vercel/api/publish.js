@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { keyword, body, imageUrl } = req.body || {};
+  const { keyword, body, imageUrl, visibility } = req.body || {};
   if (!keyword || !body) {
     res.status(400).json({ error: 'keyword/body가 필요합니다.' });
     return;
@@ -63,6 +63,8 @@ module.exports = async (req, res) => {
 
     // ponytail: 카테고리는 기본값 사용. 지정 필요 시 발행 패널의 '.option_category__* button'(해시 클래스) 클릭 추가.
     await frame.locator('button[data-click-area="tpb.publish"]').click();
+    // 테스트용: visibility === 'private'이면 비공개로 발행(기본은 패널 기본값=전체공개)
+    if (visibility === 'private') await frame.locator('label[for="open_private"]').click();
     await frame.locator('button[data-testid="seOnePublishBtn"]').click();
     // 발행 성공 = 글 보기 URL(logNo)로 이동. 안 되면 실패로 처리(발행 안 된 글을 성공 기록하지 않기 위함).
     await page.waitForURL(/logNo=|\/\d{6,}/, { timeout: 30000 });

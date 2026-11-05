@@ -236,7 +236,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost }) }}"
+        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost, visibility: 'private' }) }}"
       },
       "credentials": {
         "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
