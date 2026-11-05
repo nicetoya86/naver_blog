@@ -1,6 +1,7 @@
 {
   "name": "naver-blog-automation-api",
   "private": true,
+  "engines": { "node": "22.x" },
   "dependencies": {
     "playwright-core": "1.48.2",
     "@sparticuz/chromium": "131.0.1",
