@@ -145,13 +145,13 @@
     },
     {
       "id": "http-nim",
-      "name": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)",
+      "name": "NIM 이미지 생성 (FLUX.1-schnell)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1740, 600],
       "parameters": {
         "method": "POST",
-        "url": "https://ai.api.nvidia.com/v1/genai/qwen/qwen-image",
+        "url": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -162,7 +162,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ prompt: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일`, n: 1 }) }}"
+        "jsonBody": "={{ JSON.stringify({ prompt: `${$json.keyword} 관련 블로그 개념 이미지, 사실적 스타일`, width: 1024, height: 1024, steps: 4, seed: 0 }) }}"
       },
       "credentials": {
         "httpHeaderAuth": { "id": "ZKyZ3RffHqriP91u", "name": "NVIDIA NIM key (verified)" }
@@ -175,7 +175,7 @@
       "typeVersion": 2,
       "position": [1960, 600],
       "parameters": {
-        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\nconst imageUrl = imageResp?.data?.[0]?.url || imageResp?.images?.[0]?.url || null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
+        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\n// FLUX 응답: artifacts[0].base64(JPEG), URL 아님 -> data URI로 전달\nconst art = imageResp?.artifacts?.[0];\nconst imageUrl = art?.base64 && art.finishReason === 'SUCCESS' ? 'data:image/jpeg;base64,' + art.base64 : null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
       }
     },
     {
@@ -271,8 +271,8 @@
     },
     "키워드 수집": { "main": [[{ "node": "Gemini 본문 생성", "type": "main", "index": 0 }]] },
     "Gemini 본문 생성": { "main": [[{ "node": "본문 추출", "type": "main", "index": 0 }]] },
-    "본문 추출": { "main": [[{ "node": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)", "type": "main", "index": 0 }]] },
-    "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
+    "본문 추출": { "main": [[{ "node": "NIM 이미지 생성 (FLUX.1-schnell)", "type": "main", "index": 0 }]] },
+    "NIM 이미지 생성 (FLUX.1-schnell)": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
     "발행전 체크리스트": { "main": [[{ "node": "체크리스트 통과?", "type": "main", "index": 0 }]] },
     "체크리스트 통과?": {
       "main": [

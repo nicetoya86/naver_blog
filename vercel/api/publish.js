@@ -40,20 +40,33 @@ module.exports = async (req, res) => {
     await page.goto(`https://blog.naver.com/${NAVER_BLOG_ID}?Redirect=Write`);
     await page.waitForLoadState('networkidle');
 
-    // TODO: 실제 네이버 블로그 스마트에디터 ONE 셀렉터로 교체 필요 (SETUP.md §5)
+    // 셀렉터는 2026-11 실제 에디터 DOM에서 확인(해시 붙은 CSS 클래스 대신 data 속성 사용).
     const frame = page.frameLocator('iframe#mainFrame');
-    await frame.locator('.se-title-text').click();
-    await page.keyboard.type(keyword, { delay: 30 });
-    await frame.locator('.se-component-content').first().click();
-    await page.keyboard.type(body, { delay: 5 });
+    // 도움말 오버레이가 뜨면 닫는다(없으면 무시)
+    await frame.getByRole('button', { name: '닫기' }).first().click({ timeout: 3000 }).catch(() => {});
 
-    if (imageUrl) {
-      // TODO: 이미지 삽입 UI 플로우(에디터 이미지 버튼 클릭 → URL/업로드) 구현 필요
+    await frame.locator('.se-documentTitle .se-text-paragraph').click();
+    await page.keyboard.type(keyword, { delay: 10 });
+    await frame.locator('[data-a11y-title="본문"] .se-text-paragraph').first().click();
+    await page.keyboard.type(body, { delay: 2 });
+
+    // imageUrl은 n8n이 보내는 data URI(base64 JPEG). 파일 선택창에 버퍼로 주입.
+    const m = imageUrl && /^data:(image\/\w+);base64,(.+)$/.exec(imageUrl);
+    if (m) {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser'),
+        frame.locator('button[data-name="image"]').click(),
+      ]);
+      await chooser.setFiles({ name: 'image.jpg', mimeType: m[1], buffer: Buffer.from(m[2], 'base64') });
+      await page.waitForTimeout(3000); // 업로드 완료 대기
     }
 
-    // 발행 버튼 클릭이 구현되기 전까지는 성공으로 끝내면 안 된다 — 발행 안 된 글을
-    // 발행된 것으로 기록해 키워드 소진/중복발행 방지 로직이 오작동하는 사고 방지.
-    throw new Error('PUBLISH_NOT_IMPLEMENTED: 카테고리 선택/발행 버튼 클릭이 아직 구현되지 않았습니다 — 실제 에디터 셀렉터 검증 후 구현 필요(SETUP.md §5 참조)');
+    // ponytail: 카테고리는 기본값 사용. 지정 필요 시 발행 패널의 '.option_category__* button'(해시 클래스) 클릭 추가.
+    await frame.locator('button[data-click-area="tpb.publish"]').click();
+    await frame.locator('button[data-testid="seOnePublishBtn"]').click();
+    // 발행 성공 = 글 보기 URL(logNo)로 이동. 안 되면 실패로 처리(발행 안 된 글을 성공 기록하지 않기 위함).
+    await page.waitForURL(/logNo=|\/\d{6,}/, { timeout: 30000 });
+    res.status(200).json({ ok: true, url: page.url() });
   } catch (err) {
     res.status(500).json({ error: String((err && err.message) || err) });
   } finally {
