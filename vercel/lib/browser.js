@@ -1,3 +1,6 @@
+// @sparticuz/chromium은 require 시점에 AWS_EXECUTION_ENV로 AL2/AL2023 라이브러리(libnss3 등) 경로를 정한다.
+// Vercel에서 값이 20.x/22.x가 아니면 libnss3 누락으로 기동 실패하므로 require 전에 고정한다(package.json engines=22.x와 맞춤).
+process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs22.x';
 const chromium = require('@sparticuz/chromium');
 const { chromium: playwrightChromium } = require('playwright-core');
 
