@@ -36,6 +36,8 @@ module.exports = async (req, res) => {
     const frame = page.frameLocator('iframe#mainFrame');
     // 도움말 오버레이가 뜨면 닫는다(없으면 무시)
     await frame.getByRole('button', { name: '닫기' }).first().click({ timeout: 3000 }).catch(() => {});
+    // 이전 발행이 중간에 끊겨 자동저장된 임시글이 있으면 복원 팝업이 뜬다 -> 취소(새 글로 시작)
+    await frame.getByRole('button', { name: '취소', exact: true }).click({ timeout: 3000 }).catch(() => {});
 
     await frame.locator('.se-documentTitle .se-text-paragraph').click();
     await page.keyboard.type(keyword, { delay: 10 });
@@ -47,7 +49,7 @@ module.exports = async (req, res) => {
     if (m) {
       const [chooser] = await Promise.all([
         page.waitForEvent('filechooser'),
-        frame.locator('button[data-name="image"]').click(),
+        frame.locator('button[data-name="image"][data-group="documentToolbar"]').click(),
       ]);
       await chooser.setFiles({ name: 'image.jpg', mimeType: m[1], buffer: Buffer.from(m[2], 'base64') });
       await page.waitForTimeout(3000); // 업로드 완료 대기
