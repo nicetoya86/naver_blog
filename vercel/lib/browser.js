@@ -15,6 +15,25 @@ async function launchBrowser() {
   });
 }
 
+// 로그인: NAVER_COOKIES(사람이 로컬에서 로그인해 저장한 쿠키 JSON 배열)가 있으면 재사용, 없으면 ID/PW 로그인.
+// 서버 IP에서는 캡차/기기인증으로 ID/PW 로그인이 막혀 쿠키 재사용이 기본 경로.
+async function naverLogin(page) {
+  const { NAVER_ID, NAVER_PW, NAVER_COOKIES } = process.env;
+  if (NAVER_COOKIES) {
+    await page.context().addCookies(JSON.parse(NAVER_COOKIES));
+    await page.goto('https://nid.naver.com/user2/help/myInfoV2?lang=ko_KR');
+  } else {
+    await page.goto('https://nid.naver.com/nidlogin.login');
+    await page.fill('#id', NAVER_ID);
+    await page.fill('#pw', NAVER_PW);
+    await page.press('#pw', 'Enter');
+  }
+  await page.waitForLoadState('networkidle');
+  if (page.url().includes('nidlogin')) {
+    throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 또는 쿠키 만료) — 사람 개입 필요');
+  }
+}
+
 function checkSecret(req, res) {
   if (!process.env.API_SECRET || req.headers['x-api-secret'] !== process.env.API_SECRET) {
     res.status(401).json({ error: 'UNAUTHORIZED' });
@@ -23,4 +42,4 @@ function checkSecret(req, res) {
   return true;
 }
 
-module.exports = { launchBrowser, checkSecret };
+module.exports = { launchBrowser, naverLogin, checkSecret };

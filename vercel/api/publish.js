@@ -2,7 +2,7 @@
 // 이 Vercel 함수로 옮겼다. n8n의 "Playwright 발행" 노드가 draft를 파일이 아니라
 // 요청 본문(JSON)으로 직접 보낸다(서버리스 환경은 n8n과 파일시스템을 공유하지 않음).
 // 필수 환경변수(Vercel 프로젝트 설정): NAVER_ID, NAVER_PW, NAVER_BLOG_ID, API_SECRET
-const { launchBrowser, checkSecret } = require('../lib/browser');
+const { launchBrowser, naverLogin, checkSecret } = require('../lib/browser');
 
 module.exports = async (req, res) => {
   if (!checkSecret(req, res)) return;
@@ -27,15 +27,7 @@ module.exports = async (req, res) => {
   const page = await browser.newPage();
 
   try {
-    await page.goto('https://nid.naver.com/nidlogin.login');
-    await page.fill('#id', NAVER_ID);
-    await page.fill('#pw', NAVER_PW);
-    await page.press('#pw', 'Enter');
-    await page.waitForLoadState('networkidle');
-
-    if (page.url().includes('nidlogin')) {
-      throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
-    }
+    await naverLogin(page);
 
     await page.goto(`https://blog.naver.com/${NAVER_BLOG_ID}?Redirect=Write`);
     await page.waitForLoadState('networkidle');
