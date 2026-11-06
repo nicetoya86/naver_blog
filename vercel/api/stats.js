@@ -7,7 +7,7 @@ module.exports = async (req, res) => {
   if (!checkSecret(req, res)) return;
 
   const { NAVER_ID, NAVER_PW, NAVER_BLOG_ID } = process.env;
-  if (!NAVER_ID || !NAVER_PW || !NAVER_BLOG_ID) {
+  if (!NAVER_BLOG_ID || (!process.env.NAVER_COOKIES && (!NAVER_ID || !NAVER_PW))) {
     res.status(500).json({ error: 'NAVER_ID, NAVER_PW, NAVER_BLOG_ID 환경변수가 필요합니다.' });
     return;
   }

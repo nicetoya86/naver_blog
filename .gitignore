@@ -1,4 +1,5 @@
+node_modules/
 .bkit/
 .claude/
-node_modules/
-.envnaver-cookies.json
+.env
+naver-cookies.json
