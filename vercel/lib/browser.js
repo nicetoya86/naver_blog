@@ -31,7 +31,9 @@ async function naverLogin(page) {
   }
   await page.waitForLoadState('networkidle');
   if (page.url().includes('nidlogin')) {
-    throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 또는 쿠키 만료) — 사람 개입 필요');
+    // 원인 진단용: 현재 URL/제목/본문 앞부분(쿠키 값은 포함하지 않음)
+    const text = await page.locator('body').innerText().catch(() => '');
+    throw new Error(`LOGIN_FAIL: 로그인 실패(캡차/2FA 또는 쿠키 만료) — 사람 개입 필요 [url=${page.url()} title=${await page.title()} cookies=${NAVER_COOKIES ? 'yes' : 'no'} text=${text.replace(/\s+/g, ' ').slice(0, 200)}]`);
   }
 }
 
