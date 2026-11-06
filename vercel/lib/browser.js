@@ -21,7 +21,8 @@ async function naverLogin(page) {
   const { NAVER_ID, NAVER_PW, NAVER_COOKIES } = process.env;
   if (NAVER_COOKIES) {
     await page.context().addCookies(JSON.parse(NAVER_COOKIES));
-    await page.goto('https://nid.naver.com/user2/help/myInfoV2?lang=ko_KR');
+    // myInfoV2는 로그인 상태여도 비밀번호 재확인으로 nidlogin 리다이렉트되므로 블로그 글쓰기로 확인
+    await page.goto(`https://blog.naver.com/${process.env.NAVER_BLOG_ID}?Redirect=Write`);
   } else {
     await page.goto('https://nid.naver.com/nidlogin.login');
     await page.fill('#id', NAVER_ID);
