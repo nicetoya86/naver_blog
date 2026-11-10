@@ -27,12 +27,16 @@ module.exports = async (req, res) => {
       throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
     }
 
-    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/home/visitstat`);
+    // 2026-11-11 aside로 실제 DOM 검증 완료: `/home/visitstat` 경로는 사라졌다.
+    // 검색유입은 절대 건수가 아니라 유입경로 중 검색 비중(%)으로만 노출됨(아래 searchInflow는 %값).
+    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/stat/uv`);
     await page.waitForLoadState('networkidle');
+    const visitors = await page.frameLocator('iframe[name="statmain"]').locator('.u_ni_value_wrap__1vART span.u_ni_value__xjQzF').innerText().catch(() => null);
 
-    // TODO: 아래 셀렉터는 실제 통계 페이지 구조에 맞춰 재검증 필요 (SETUP.md §5)
-    const visitors = await page.locator('[data-stat="today-visitors"]').innerText().catch(() => null);
-    const searchInflow = await page.locator('[data-stat="today-search-inflow"]').innerText().catch(() => null);
+    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/stat/referer`);
+    await page.waitForLoadState('networkidle');
+    await page.locator('a[data-nclk="search"]').click().catch(() => {});
+    const searchInflow = await page.frameLocator('iframe[name="statmain"]').locator('span.u_ni_data__1FOoZ').innerText().catch(() => null);
 
     if (visitors === null || searchInflow === null) {
       throw new Error('통계 셀렉터를 찾지 못했습니다. STATS_FETCH_FAIL (페이지 구조 변경 가능성).');

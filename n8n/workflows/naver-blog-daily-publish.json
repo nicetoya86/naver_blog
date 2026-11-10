@@ -121,7 +121,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `다음 키워드로 네이버 블로그 정보성 글을 자연스러운 한국어로 작성해줘. 매번 다른 문단 구조와 어투를 사용해. 키워드: ${$json.keyword}. 서론-본론-결론 구조, 모바일 가독성을 위해 문단은 3~4줄 이내, 질문-답변 형태 소제목 1개 이상 포함.` }] }] })}}"
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `다음 키워드로 네이버 블로그 정보성 글을 자연스러운 한국어로 작성해줘. 매번 다른 문단 구조와 어투를 사용해. 키워드: ${$json.keyword}. 서론-본론-결론 구조, 모바일 가독성을 위해 문단은 3~4줄(약 120자) 이내로 자주 줄바꿈, 질문 형태 소제목(물음표로 끝나는 ## 소제목) 1개 이상 포함, 실제 사용 경험처럼 느껴지는 1인칭 문장 1~2개 포함. 제목은 키워드를 그대로 쓰지 말고 클릭을 유도하는 25자 내외 자연스러운 문장으로 만들어(특수문자 남용 금지). 다른 설명 없이 아래 형식으로만 응답: \\n[제목]\\n(제목)\\n[본문]\\n(본문)` }] }] })}}"
       },
       "credentials": {
         "httpHeaderAuth": { "id": "2Iqv4LQ8T9fsSI7o", "name": "Gemini API key" }
@@ -134,18 +134,18 @@
       "typeVersion": 2,
       "position": [1520, 600],
       "parameters": {
-        "jsCode": "// Design Ref: §4.1 node 5 — Gemini 응답에서 본문 텍스트 추출\nconst resp = $input.first().json;\nconst text = resp?.candidates?.[0]?.content?.parts?.[0]?.text;\nif (!text) {\n  throw new Error('Gemini 응답에서 본문을 추출하지 못했습니다: ' + JSON.stringify(resp).slice(0, 300));\n}\nreturn [{ json: { ...$('키워드 수집').first().json, body: text } }];"
+        "jsCode": "// Design Ref: §4.1 node 5 — Gemini 응답에서 제목/본문 텍스트 추출\nconst resp = $input.first().json;\nconst text = resp?.candidates?.[0]?.content?.parts?.[0]?.text;\nif (!text) {\n  throw new Error('Gemini 응답에서 본문을 추출하지 못했습니다: ' + JSON.stringify(resp).slice(0, 300));\n}\nconst m = text.match(/\\[제목\\]\\s*([\\s\\S]*?)\\s*\\[본문\\]\\s*([\\s\\S]*)/);\n// Gemini가 형식 지시를 안 지켰을 때의 fallback: 키워드를 제목으로, 전체 텍스트를 본문으로 사용\nconst title = m ? m[1].trim() : $('키워드 수집').first().json.keyword;\nconst body = m ? m[2].trim() : text.trim();\nreturn [{ json: { ...$('키워드 수집').first().json, title, body } }];"
       }
     },
     {
-      "id": "http-nim",
-      "name": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)",
+      "id": "http-gemini-image",
+      "name": "Gemini 이미지 생성",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1740, 600],
       "parameters": {
         "method": "POST",
-        "url": "https://ai.api.nvidia.com/v1/genai/qwen/qwen-image",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -156,10 +156,10 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ prompt: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일`, n: 1 }) }}"
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일` }] }], generationConfig: { responseModalities: ['IMAGE'] } }) }}"
       },
       "credentials": {
-        "httpHeaderAuth": { "id": "ZKyZ3RffHqriP91u", "name": "NVIDIA NIM key (verified)" }
+        "httpHeaderAuth": { "id": "2Iqv4LQ8T9fsSI7o", "name": "Gemini API key" }
       }
     },
     {
@@ -169,7 +169,7 @@
       "typeVersion": 2,
       "position": [1960, 600],
       "parameters": {
-        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\nconst imageUrl = imageResp?.data?.[0]?.url || imageResp?.images?.[0]?.url || null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
+        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05 + 2026-11 SEO 감사 반영: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다,\n// 제목 품질, 질문형 소제목, 문단 길이(모바일 가독성) 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst title = prevItem.title;\nconst imageResp = $input.first().json;\nconst imagePart = imageResp?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);\nconst imageUrl = imagePart ? `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` : null;\n\nconst MIN_LENGTH = 1000;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\nconst MAX_PARAGRAPH_LENGTH = 200; // 모바일 가독성: 한 문단이 너무 길면 Fail\n\nconst paragraphs = body.split(/\\n{2,}/).map(p => p.trim()).filter(Boolean);\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Winston AI, 한국어 지원 확인됨).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })(),\n  hasTitle: !!title && title.length >= 5 && title.length <= 40 && title !== prevItem.keyword,\n  hasQuestionSubheading: /^#{1,3}\\s*.*\\?\\s*$/m.test(body),\n  paragraphLengthOk: paragraphs.every(p => p.length <= MAX_PARAGRAPH_LENGTH)\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
       }
     },
     {
@@ -230,7 +230,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost }) }}"
+        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, title: $json.title, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost }) }}"
       },
       "credentials": {
         "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
@@ -265,8 +265,8 @@
     },
     "키워드 수집": { "main": [[{ "node": "Gemini 본문 생성", "type": "main", "index": 0 }]] },
     "Gemini 본문 생성": { "main": [[{ "node": "본문 추출", "type": "main", "index": 0 }]] },
-    "본문 추출": { "main": [[{ "node": "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)", "type": "main", "index": 0 }]] },
-    "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
+    "본문 추출": { "main": [[{ "node": "Gemini 이미지 생성", "type": "main", "index": 0 }]] },
+    "Gemini 이미지 생성": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
     "발행전 체크리스트": { "main": [[{ "node": "체크리스트 통과?", "type": "main", "index": 0 }]] },
     "체크리스트 통과?": {
       "main": [
@@ -277,5 +277,5 @@
     "제휴비중 게이트": { "main": [[{ "node": "Playwright 발행", "type": "main", "index": 0 }]] },
     "Playwright 발행": { "main": [[{ "node": "상태 기록", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "binaryMode": "separate" }
 }

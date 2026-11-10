@@ -54,9 +54,12 @@ npm install playwright
 npx playwright install chromium
 ```
 
-### 5. 셀렉터 검증 (필수, 1회)
+### 5. 셀렉터 검증 (2026-11-11 완료)
 
-`n8n/scripts/naver-stats.playwright.js`의 통계 페이지 셀렉터(`[data-stat="today-visitors"]` 등)는 플레이스홀더다. 실제 네이버 통계 페이지(`admin.blog.naver.com/{blogId}/home/visitstat`)에 로그인해 개발자 도구로 실제 DOM 구조를 확인하고 셀렉터를 교체해야 동작한다. 이 검증 전까지는 스크립트가 `STATS_FETCH_FAIL`로 exit 1 하고, "실행 실패?" 분기가 텔레그램으로 알린 뒤 중단한다(Design §6.1). `emergencyBrake`는 이 경로에서 변경되지 않는다(오탐 방지).
+실제 통계 페이지(`admin.blog.naver.com/{blogId}/stat/uv`, `/stat/referer`)와 에디터(제목/본문) 선택자는 aside로 읽기 전용 DOM 조사를 완료해 코드에 반영했다(`naver-stats.playwright.js`, `naver-publish.playwright.js`, `vercel/api/stats.js`, `vercel/api/publish.js`). 단 두 가지는 아직 미해결:
+- `/home/visitstat` 경로 자체가 없어졌고, 새 통계 페이지에선 "검색 유입"이 절대 건수가 아니라 유입경로 중 검색 비중(%)으로만 노출된다 — 급락 판정 로직(day-over-day dropRate)은 구조적으로 그대로 동작하지만 "유입 건수 급락"이 아니라 "유입 비중 급락"으로 의미가 바뀐다. 운영 중 오탐 여부 확인 권장.
+- 발행 버튼/카테고리 선택 선택자는 식별만 했고 실제 클릭(발행)까지는 테스트하지 않았다 — `naver-publish.playwright.js`/`vercel/api/publish.js`는 여전히 `PUBLISH_NOT_IMPLEMENTED`로 의도적으로 실패한다. 운영자가 감독 하에 1회 실제 클릭 테스트 후 해당 에러를 제거할 것.
+- 선택자가 CSS 모듈 해시 클래스(`__xxxx`)라 네이버가 배포를 바꾸면 깨질 수 있다 — 깨지면 재검증 필요.
 
 ### 6. 동작 확인
 
@@ -67,7 +70,7 @@ npx playwright install chromium
 5. 긴급브레이크 전파 확인(daily-publish와 공유): 4번 실행 후 `$PROJECT_ROOT/.n8n-shared-state.json`에 `{"emergencyBrake":true}`가 기록됐는지 확인 → daily-publish를 수동 실행해 "긴급브레이크 확인" 분기에서 중단되는지 확인. 수동 해제는 이 파일의 `emergencyBrake`를 `false`로 고치거나 파일을 삭제하면 된다(운영 중 재개 절차).
 6. 스크립트 실패 알림 테스트: `NAVER_ID`를 일부러 틀리게 설정하고 실행 → `LOGIN_FAIL`로 exit 1 → "텔레그램: 통계 수집 실패 알림" 수신 확인(`Run Stats Script`에 `continueOnFail: true`가 설정돼 있어 실패해도 워크플로우가 이어서 분기 처리함).
 
-**Known Gap**: n8n 버전에 따라 `continueOnFail` 시 실패 아이템의 에러 필드 모양(`$json.error`)이 다를 수 있다(확인 필요, SETUP.md 작성 시점 미검증). 위 6번으로 반드시 실제 환경에서 확인할 것. daily-publish 쪽 Execute Command(Gemini/NIM/Playwright 발행)는 아직 동일한 실패 알림 분기가 없다 — 필요시 같은 패턴으로 추가.
+**Known Gap**: n8n 버전에 따라 `continueOnFail` 시 실패 아이템의 에러 필드 모양(`$json.error`)이 다를 수 있다(확인 필요, SETUP.md 작성 시점 미검증). 위 6번으로 반드시 실제 환경에서 확인할 것. daily-publish 쪽 Execute Command(Gemini 본문/이미지 생성/Playwright 발행)는 아직 동일한 실패 알림 분기가 없다 — 필요시 같은 패턴으로 추가.
 
 ---
 
@@ -81,13 +84,11 @@ npx playwright install chromium
 
 | Credential | 종류 | 용도 |
 |---|---|---|
-| `gemini-naver-blog` | HTTP Header Auth 또는 Custom | Gemini API 키(`geminiApi.apiKey`) |
-| `nim-naver-blog` | HTTP Header Auth 또는 Custom | NVIDIA NIM API 키(`nimApi.apiKey`) |
+| `gemini-naver-blog` | HTTP Header Auth 또는 Custom | Gemini API 키(`geminiApi.apiKey`) — 본문 생성과 이미지 생성 두 노드가 공유 |
 | `telegram-naver-blog` | Telegram API | 체크리스트 탈락 알림 (module-1과 동일 Credential 재사용) |
 
-두 HTTP Request 노드("Gemini 본문 생성", "NIM 이미지 생성")는 n8n의 Generic Credential Type(`httpHeaderAuth`)을 쓰도록 구성돼 있다. n8n UI에서 각각 HTTP Header Auth credential을 만들고:
+두 HTTP Request 노드("Gemini 본문 생성", "Gemini 이미지 생성")는 동일한 Gemini Credential을 공유하도록 구성돼 있다(n8n의 Generic Credential Type `httpHeaderAuth`). n8n UI에서 HTTP Header Auth credential을 하나 만들고:
 - `gemini-naver-blog`: Header Name `x-goog-api-key`, Header Value = 실제 Gemini API 키
-- `nim-naver-blog`: Header Name `Authorization`, Header Value = `Bearer <실제 NIM API 키>`
 
 만든 뒤 해당 HTTP Request 노드를 열어 Credential을 위 이름으로 연결(워크플로우 JSON의 `id: "TBD"`를 n8n UI에서 실제 credential로 교체, Telegram credential과 동일한 방식).
 
@@ -114,9 +115,8 @@ npx playwright install chromium
 
 ### 5. 실제 연동 전 TODO (이번 세션 범위 밖, 명시적으로 미구현)
 
-- `naver-publish.playwright.js`: 스마트에디터 ONE의 실제 제목/본문/이미지/발행버튼 셀렉터 — 현재는 플레이스홀더, 1회 수동 검증 필요. **검증 전까지 스크립트는 의도적으로 `PUBLISH_NOT_IMPLEMENTED` 에러로 exit 1 한다**(발행 안 된 글을 발행된 것으로 잘못 기록하는 사고 방지) — "Playwright 발행" 노드 실행이 실패하는 게 정상이다. 단, 키워드는 발행 성공 여부와 무관하게 "키워드 수집" 단계에서 먼저 소모되므로, 이 상태로 매일 실행하면 키워드 1개 + Gemini/NIM API 호출 비용이 매일 낭비된다 — 셀렉터 검증 전까지는 Cron을 꺼두거나 수동 실행만 할 것.
-- 체크리스트의 "타 사이트 문장 유사도" 검사 — 외부 표절 검사 API(예: Copyscape) 연동 필요, 현재는 항상 통과 처리
-- **NIM 이미지 생성 엔드포인트 (필수, go-live 전)**: 워크플로우의 "NIM 이미지 생성 (TODO: 엔드포인트 검증 필요)" 노드 URL(`ai.api.nvidia.com/v1/genai/qwen/qwen-image`)은 추정값이다. NVIDIA NIM 콘솔에서 Qwen-Image 모델의 실제 엔드포인트/요청 스키마를 확인 후 교체할 것 — 미교체 시 발행이 전부 실패한다.
+- `naver-publish.playwright.js`: 스마트에디터 ONE의 실제 제목/본문/이미지/발행버튼 셀렉터 — 현재는 플레이스홀더, 1회 수동 검증 필요. **검증 전까지 스크립트는 의도적으로 `PUBLISH_NOT_IMPLEMENTED` 에러로 exit 1 한다**(발행 안 된 글을 발행된 것으로 잘못 기록하는 사고 방지) — "Playwright 발행" 노드 실행이 실패하는 게 정상이다. 단, 키워드는 발행 성공 여부와 무관하게 "키워드 수집" 단계에서 먼저 소모되므로, 이 상태로 매일 실행하면 키워드 1개 + Gemini API 호출 비용이 매일 낭비된다 — 셀렉터 검증 전까지는 Cron을 꺼두거나 수동 실행만 할 것.
+- 체크리스트의 "타 사이트 문장 유사도" 검사 — 외부 표절 검사 API(예: Winston AI) 연동 필요, 현재는 항상 통과 처리
 - `제휴비중 게이트` 노드는 플래그만 결정하며, 실제 상품 링크/이미지 삽입은 쇼핑커넥트 연동 후 구현(§module-4 참조)
 
 ### 6. Code 노드 Node.js 내장 모듈 허용 설정 (필수)
@@ -132,7 +132,7 @@ NODE_FUNCTION_ALLOW_BUILTIN=fs,os,path
 ### 6. 동작 확인
 
 1. keywordPool 채운 뒤 워크플로우 수동 실행
-2. Gemini/NIM 노드 응답에 실제 본문/이미지 URL이 오는지 확인
+2. Gemini 본문/이미지 생성 노드 응답에 실제 본문 텍스트와 이미지(base64) 데이터가 오는지 확인
 3. 체크리스트 노드 출력의 `checks`, `passed` 값 확인
 4. `lastPublishedDate`는 Static Data에서, `emergencyBrake`는 `$PROJECT_ROOT/.n8n-shared-state.json`에서 강제로 설정해 각 IF 분기가 올바르게 중단되는지 확인(module-1 §6 참조 — Static Data가 아님에 주의)
 

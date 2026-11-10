@@ -7,8 +7,12 @@
 //   NAVER_ID, NAVER_PW   : 자동화 전용 네이버 계정
 //   NAVER_BLOG_ID        : 통계를 조회할 블로그 ID (예: myblogid)
 //
-// ponytail: 네이버 통계 페이지(admin.blog.naver.com) DOM 구조는 자주 바뀐다.
-// 아래 셀렉터는 1차 구현 기준이며, 실제 페이지에서 반드시 재검증 필요(TODO 표시).
+// 2026-11-11 aside로 실제 DOM 1회 검증 완료(nicetoya 계정 로그인 상태):
+// - `/home/visitstat` 경로는 사라졌다. 방문자수는 `/stat/uv`, 검색유입은 `/stat/referer`.
+// - 검색유입은 "검색 유입 수"(절대값)가 아니라 유입경로 중 검색 비중(%)으로만 노출된다.
+//   급락 판정(Parse & Compare 노드)은 day-over-day dropRate 비교라 % 값으로도 구조적으로는 동작하지만,
+//   의미가 "검색 유입 건수 급락"이 아니라 "검색 유입 비중 급락"으로 바뀐다 — 운영 중 오탐 여부 확인 필요.
+// ponytail: 선택자가 CSS 모듈 해시 클래스(`__xxxx`)라 네이버 배포 시 깨질 수 있다. 깨지면 재검증.
 
 const { chromium } = require('playwright');
 
@@ -33,12 +37,15 @@ async function main() {
       throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
     }
 
-    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/home/visitstat`);
+    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/stat/uv`);
     await page.waitForLoadState('networkidle');
+    const statFrame = page.frameLocator('iframe[name="statmain"]');
+    const visitors = await statFrame.locator('.u_ni_value_wrap__1vART span.u_ni_value__xjQzF').innerText().catch(() => null);
 
-    // TODO: 아래 셀렉터는 실제 통계 페이지 구조에 맞춰 재검증 필요
-    const visitors = await page.locator('[data-stat="today-visitors"]').innerText().catch(() => null);
-    const searchInflow = await page.locator('[data-stat="today-search-inflow"]').innerText().catch(() => null);
+    await page.goto(`https://admin.blog.naver.com/${NAVER_BLOG_ID}/stat/referer`);
+    await page.waitForLoadState('networkidle');
+    await page.locator('a[data-nclk="search"]').click().catch(() => {});
+    const searchInflow = await page.frameLocator('iframe[name="statmain"]').locator('span.u_ni_data__1FOoZ').innerText().catch(() => null);
 
     if (visitors === null || searchInflow === null) {
       throw new Error('통계 셀렉터를 찾지 못했습니다. Design §6.1 STATS_FETCH_FAIL 처리 필요 (페이지 구조 변경 가능성).');
