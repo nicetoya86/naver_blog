@@ -23,12 +23,12 @@
       "position": [460, 300],
       "parameters": {
         "method": "GET",
-        "url": "https://naverblog-vercel.vercel.app/api/stats",
+        "url": "https://vessels-educated-yesterday-significantly.trycloudflare.com/api/stats",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth"
       },
       "credentials": {
-        "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
+        "httpHeaderAuth": { "id": "59jP4BjMM6tIVytk", "name": "naver-automation-api" }
       },
       "continueOnFail": true
     },
@@ -128,7 +128,7 @@
         "jsonBody": "={{ JSON.stringify({ emergencyBrake: true }) }}"
       },
       "credentials": {
-        "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
+        "httpHeaderAuth": { "id": "59jP4BjMM6tIVytk", "name": "naver-automation-api" }
       },
       "continueOnFail": true
     },

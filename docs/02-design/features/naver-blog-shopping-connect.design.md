@@ -83,10 +83,14 @@ version: 1.3
 └──────────────────────┘
             │
             ▼ (조회)
-   ┌──────────────────┐
-   │ n8n Static Data /  │   ← 로드맵 단계, 당일발행 플래그, 긴급브레이크 플래그 공유 저장소
-   │ 공유 DB(Airtable 등)│
-   └──────────────────┘
+   ┌──────────────────┐        ┌───────────────────────┐
+   │ n8n Static Data    │        │ Vercel Edge Config      │
+   │ (roadmapPhase,     │        │ (emergencyBrake만)      │
+   │  lastPublishedDate,│        │ — n8n Cloud Code 노드가 │
+   │  lastStats)        │        │   fs/os/path 차단이라   │
+   └──────────────────┘        │   HTTP로 워크플로우 간   │
+                                 │   공유(`/api/state`)    │
+                                 └───────────────────────┘
 ```
 
 ### 2.2 Data Flow
@@ -142,6 +146,8 @@ interface BlogAutomationState {
 
 DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global')`)로 충분(YAGNI). 운영자가 로드맵 단계를 수동 전환할 UI가 필요해지면 그때 Airtable/Google Sheet 연동을 추가한다 — 현재는 n8n Set 노드로 수동 편집.
 
+**변경(2026-10-29)**: n8n Cloud는 Code 노드의 `fs`/`os`/`path` 접근을 차단해 `emergencyBrake`를 두 워크플로우가 공유 파일로 주고받는 최초 설계가 동작하지 않았다. `emergencyBrake`만 Vercel Edge Config(`vercel/api/state.js`, GET/POST)로 분리하고, 나머지(`roadmapPhase`/`affiliateRatio`/`lastPublishedDate`/`lastStats`)는 그대로 각 워크플로우의 Static Data에 남겼다(신규 외부 서비스 추가 없이 이미 쓰는 Vercel 프로젝트 재사용, YAGNI).
+
 ---
 
 ## 4. 노드 스펙 (API Spec 대체)
@@ -158,7 +164,7 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 | 6 | 이미지 생성 | HTTP Request(Gemini 이미지; NIM Qwen-Image/FLUX는 호스팅 불가로 교체) | 지수성장기: 개념 이미지, 쇼핑커넥트 이후: 셀러 제공 이미지로 분기 |
 | 7 | 발행전 체크리스트 | Function | 최소 글자수/사진개수/유사도/키워드반복 검사 → Fail시 중단+텔레그램 알림 |
 | 8 | 제휴비중 게이트 | Function | `affiliateRatio` 조회해 이번 글을 정보성/제휴성 중 무엇으로 생성할지 결정 |
-| 9 | Playwright 발행 | Execute Command / Code | 네이버 블로그 에디터 로그인 후 발행 |
+| 9 | Playwright 발행 | HTTP Request(`vercel/api/publish.js`) | n8n Cloud가 Execute Command 미지원이라 Vercel 서버리스로 이전. 네이버 IP 차단으로 로컬 PC+cloudflared 터널에서 구동(§11.1, SETUP.md §5.1) |
 | 10 | 상태 기록 | Function | `lastPublishedDate` 갱신 |
 
 ### 4.2 monitor-alert 워크플로우 노드 목록
@@ -319,13 +325,25 @@ n8n 워크플로우 자동화 프로젝트 특성상 Presentation/Application/Do
 
 ### 11.1 워크플로우 구조
 
+**변경(2026-10-29~11-11)**: n8n Cloud가 Execute Command를 지원하지 않아 Playwright 실행부를 전부 Vercel 서버리스 함수로 옮겼다. 이후 네이버가 Vercel IP를 차단한다는 사실이 확인돼, 로그인이 필요한 두 함수(`publish`/`stats`)는 로컬 PC + cloudflared 터널로 구동하고(SETUP.md §5.1), 로그인이 필요 없는 상태공유(`state`)만 Vercel에 남겼다.
+
 ```
 n8n/
 ├── workflows/
-│   ├── naver-blog-daily-publish.json
+│   ├── naver-blog-daily-publish.json      (HTTP Request로 vercel/api/* 호출)
 │   └── naver-blog-monitor-alert.json
-└── scripts/
-    └── naver-publish.playwright.js   (Playwright 발행 스크립트, Execute Command로 호출)
+└── SETUP.md
+
+vercel/
+├── api/
+│   ├── publish.js      (Playwright 발행 — 로컬 PC+터널에서 구동 필수, SETUP.md §5.1)
+│   ├── stats.js         (통계 수집 — 로컬 PC+터널에서 구동 필수)
+│   └── state.js         (emergencyBrake GET/POST — Vercel 그대로 가능)
+├── lib/
+│   ├── browser.js        (launchBrowser/naverLogin — LOCAL_CHROME 분기, NAVER_COOKIES 우선)
+│   └── edgeConfig.js      (Vercel Edge Config 클라이언트)
+├── local/server.js        (로컬 실행용 최소 HTTP 서버)
+└── scripts/save-cookies.js (로컬에서 네이버 로그인해 NAVER_COOKIES 생성)
 ```
 
 ### 11.2 Implementation Order
@@ -364,4 +382,5 @@ n8n/
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 0.2 | 2026-11-11 | Vercel 전환 + 로컬/터널 실행 전환을 문서에 반영(§2.1, §3.3, §4.1, §11.1) — analysis.md §8 Decision Record 갱신 대응 | Claude |
 | 0.1 | 2026-10-28 | 최초 작성 (Option C 선택) | 장대광 |
