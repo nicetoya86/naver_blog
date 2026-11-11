@@ -1,13 +1,13 @@
 // n8n Cloud는 Execute Command 노드를 지원하지 않아, naver-stats.playwright.js를
 // 이 Vercel 함수로 옮겼다. n8n의 "Run Stats Script" 노드가 HTTP Request로 이 엔드포인트를 호출한다.
 // 필수 환경변수(Vercel 프로젝트 설정): NAVER_ID, NAVER_PW, NAVER_BLOG_ID, API_SECRET
-const { launchBrowser, checkSecret } = require('../lib/browser');
+const { launchBrowser, naverLogin, checkSecret } = require('../lib/browser');
 
 module.exports = async (req, res) => {
   if (!checkSecret(req, res)) return;
 
   const { NAVER_ID, NAVER_PW, NAVER_BLOG_ID } = process.env;
-  if (!NAVER_ID || !NAVER_PW || !NAVER_BLOG_ID) {
+  if (!NAVER_BLOG_ID || (!process.env.NAVER_COOKIES && (!NAVER_ID || !NAVER_PW))) {
     res.status(500).json({ error: 'NAVER_ID, NAVER_PW, NAVER_BLOG_ID 환경변수가 필요합니다.' });
     return;
   }
@@ -16,16 +16,7 @@ module.exports = async (req, res) => {
   const page = await browser.newPage();
 
   try {
-    await page.goto('https://nid.naver.com/nidlogin.login');
-    await page.fill('#id', NAVER_ID);
-    await page.fill('#pw', NAVER_PW);
-    await page.click('.btn_login');
-    await page.waitForLoadState('networkidle');
-
-    // 로그인 실패(캡차/2FA 포함) 시 nidlogin 페이지에 그대로 남는다
-    if (page.url().includes('nidlogin')) {
-      throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
-    }
+    await naverLogin(page);
 
     // 2026-11-11 aside로 실제 DOM 검증 완료: `/home/visitstat` 경로는 사라졌다.
     // 검색유입은 절대 건수가 아니라 유입경로 중 검색 비중(%)으로만 노출됨(아래 searchInflow는 %값).

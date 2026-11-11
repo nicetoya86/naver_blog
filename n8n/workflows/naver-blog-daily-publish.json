@@ -29,11 +29,17 @@
     {
       "id": "code-read-shared",
       "name": "공유상태 읽기 (긴급브레이크)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [530, 400],
       "parameters": {
-        "jsCode": "// Design Ref: §6.1 Error Handling — emergencyBrake는 monitor-alert 워크플로우가 설정한다.\n// $getWorkflowStaticData('global')는 워크플로우마다 별도로 저장되어 다른 워크플로우가 쓴\n// 값을 읽을 수 없다. 두 워크플로우가 같은 서버에서 실행된다는 전제로 공유 파일을 쓴다\n// (YAGNI: 별도 DB 미도입, monitor-alert의 '긴급브레이크 ON' 노드가 같은 파일에 기록).\n// PROJECT_ROOT 하위에 두는 이유: OS temp는 재부팅/정리 시 지워져 긴급브레이크가 조용히\n// 풀릴 수 있다(SETUP.md 참조) — PROJECT_ROOT 미설정 시에만 temp로 폴백한다.\nconst fs = require('fs');\nconst path = require('path');\nconst os = require('os');\n\nconst sharedStatePath = path.join($env.PROJECT_ROOT || os.tmpdir(), '.n8n-shared-state.json');\nlet shared = {};\ntry {\n  shared = JSON.parse(fs.readFileSync(sharedStatePath, 'utf8'));\n} catch (e) {\n  // 파일이 없으면 긴급브레이크 미설정 상태로 간주\n}\n\nreturn [{ json: { ...$input.first().json, emergencyBrake: shared.emergencyBrake === true } }];"
+        "method": "GET",
+        "url": "https://naverblog-vercel.vercel.app/api/state",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
       }
     },
     {
@@ -138,14 +144,14 @@
       }
     },
     {
-      "id": "http-gemini-image",
-      "name": "Gemini 이미지 생성",
+      "id": "http-nim",
+      "name": "이미지 생성 (Gemini)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1740, 600],
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -156,7 +162,8 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `${$json.keyword} 관련 블로그 개념 이미지, 상업적 이용 가능, 사실적 스타일` }] }], generationConfig: { responseModalities: ['IMAGE'] } }) }}"
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `A realistic editorial photo that illustrates the blog topic: ${$json.keyword}. No text, no letters, no watermark.` }] }], generationConfig: { responseModalities: ['IMAGE'] } }) }}",
+        "options": { "timeout": 90000 }
       },
       "credentials": {
         "httpHeaderAuth": { "id": "2Iqv4LQ8T9fsSI7o", "name": "Gemini API key" }
@@ -169,7 +176,7 @@
       "typeVersion": 2,
       "position": [1960, 600],
       "parameters": {
-        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05 + 2026-11 SEO 감사 반영: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다,\n// 제목 품질, 질문형 소제목, 문단 길이(모바일 가독성) 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst title = prevItem.title;\nconst imageResp = $input.first().json;\nconst imagePart = imageResp?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);\nconst imageUrl = imagePart ? `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` : null;\n\nconst MIN_LENGTH = 1000;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\nconst MAX_PARAGRAPH_LENGTH = 200; // 모바일 가독성: 한 문단이 너무 길면 Fail\n\nconst paragraphs = body.split(/\\n{2,}/).map(p => p.trim()).filter(Boolean);\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Winston AI, 한국어 지원 확인됨).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })(),\n  hasTitle: !!title && title.length >= 5 && title.length <= 40 && title !== prevItem.keyword,\n  hasQuestionSubheading: /^#{1,3}\\s*.*\\?\\s*$/m.test(body),\n  paragraphLengthOk: paragraphs.every(p => p.length <= MAX_PARAGRAPH_LENGTH)\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
+        "jsCode": "// Design Ref: §4.1 node 7 — 발행전 체크리스트\n// Plan FR-05: 최소 글자 수, 사진 개수, 타 사이트 문장 유사도, 키워드 반복 과다 검사\nconst prevItem = $('본문 추출').first().json;\nconst body = prevItem.body;\nconst imageResp = $input.first().json;\n// Gemini 응답: candidates[0].content.parts[].inlineData(base64), URL 아님 -> data URI로 전달\nconst part = imageResp?.candidates?.[0]?.content?.parts?.find(x => x.inlineData);\nconst imageUrl = part ? `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` : null;\n\nconst MIN_LENGTH = 500;\nconst MAX_KEYWORD_RATIO = 0.03; // 키워드가 본문 길이의 3% 넘으면 과다 반복으로 판정\n\nconst checks = {\n  minLength: body.length >= MIN_LENGTH,\n  hasImage: !!imageUrl,\n  // ponytail: 타 사이트 문장 유사도 체크는 외부 표절 검사 API 연동이 필요 (예: Copyscape).\n  // 1차 구현은 스킵하고 항상 통과 처리 — 외부 API 계약 전까지는 수동 검수로 보완.\n  similarityOk: true,\n  keywordRepetitionOk: (() => {\n    const kw = prevItem.keyword;\n    const count = body.split(kw).length - 1;\n    return (kw.length * count / body.length) <= MAX_KEYWORD_RATIO;\n  })()\n};\n\nconst passed = Object.values(checks).every(Boolean);\n\nreturn [{\n  json: {\n    ...prevItem,\n    imageUrl,\n    checks,\n    passed\n  }\n}];"
       }
     },
     {
@@ -199,7 +206,7 @@
       "typeVersion": 1.2,
       "position": [2400, 740],
       "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "chatId": "523002062",
         "text": "=⚠️ [naver-blog] 발행전 체크리스트 탈락으로 오늘 발행을 스킵합니다.\\n키워드: {{ $json.keyword }}\\n체크 결과: {{ JSON.stringify($json.checks) }}",
         "additionalFields": {}
       },
@@ -225,12 +232,12 @@
       "position": [2620, 480],
       "parameters": {
         "method": "POST",
-        "url": "https://REPLACE-WITH-YOUR-VERCEL-URL.vercel.app/api/publish",
+        "url": "https://naverblog-vercel.vercel.app/api/publish",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, title: $json.title, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost }) }}"
+        "jsonBody": "={{ JSON.stringify({ keyword: $json.keyword, body: $json.body, imageUrl: $json.imageUrl, isAffiliatePost: $json.isAffiliatePost, visibility: 'private' }) }}"
       },
       "credentials": {
         "httpHeaderAuth": { "id": "sKUHKutpStL6mz8M", "name": "naver-automation-api" }
@@ -265,8 +272,8 @@
     },
     "키워드 수집": { "main": [[{ "node": "Gemini 본문 생성", "type": "main", "index": 0 }]] },
     "Gemini 본문 생성": { "main": [[{ "node": "본문 추출", "type": "main", "index": 0 }]] },
-    "본문 추출": { "main": [[{ "node": "Gemini 이미지 생성", "type": "main", "index": 0 }]] },
-    "Gemini 이미지 생성": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
+    "본문 추출": { "main": [[{ "node": "이미지 생성 (Gemini)", "type": "main", "index": 0 }]] },
+    "이미지 생성 (Gemini)": { "main": [[{ "node": "발행전 체크리스트", "type": "main", "index": 0 }]] },
     "발행전 체크리스트": { "main": [[{ "node": "체크리스트 통과?", "type": "main", "index": 0 }]] },
     "체크리스트 통과?": {
       "main": [

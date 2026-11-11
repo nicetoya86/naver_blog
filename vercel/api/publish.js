@@ -2,23 +2,22 @@
 // 이 Vercel 함수로 옮겼다. n8n의 "Playwright 발행" 노드가 draft를 파일이 아니라
 // 요청 본문(JSON)으로 직접 보낸다(서버리스 환경은 n8n과 파일시스템을 공유하지 않음).
 // 필수 환경변수(Vercel 프로젝트 설정): NAVER_ID, NAVER_PW, NAVER_BLOG_ID, API_SECRET
-const { launchBrowser, checkSecret } = require('../lib/browser');
+const { launchBrowser, naverLogin, checkSecret } = require('../lib/browser');
 
 module.exports = async (req, res) => {
   if (!checkSecret(req, res)) return;
 
   const { NAVER_ID, NAVER_PW, NAVER_BLOG_ID } = process.env;
-  if (!NAVER_ID || !NAVER_PW || !NAVER_BLOG_ID) {
+  if (!NAVER_BLOG_ID || (!process.env.NAVER_COOKIES && (!NAVER_ID || !NAVER_PW))) {
     res.status(500).json({ error: 'NAVER_ID, NAVER_PW, NAVER_BLOG_ID 환경변수가 필요합니다.' });
     return;
   }
 
-  const { keyword, title, body, imageUrl } = req.body || {};
+  const { keyword, body, imageUrl, visibility } = req.body || {};
   if (!keyword || !body) {
     res.status(400).json({ error: 'keyword/body가 필요합니다.' });
     return;
   }
-  const postTitle = title || keyword; // Gemini가 제목 형식을 안 지켰을 때의 fallback
 
   // Design Ref: §4.1 node 8 제휴비중 게이트 — module-4
   // TODO: 쇼핑커넥트 연동 후 isAffiliatePost=true일 때 셀러 제공 상품 이미지/링크를
@@ -28,36 +27,42 @@ module.exports = async (req, res) => {
   const page = await browser.newPage();
 
   try {
-    await page.goto('https://nid.naver.com/nidlogin.login');
-    await page.fill('#id', NAVER_ID);
-    await page.fill('#pw', NAVER_PW);
-    await page.click('.btn_login');
-    await page.waitForLoadState('networkidle');
-
-    if (page.url().includes('nidlogin')) {
-      throw new Error('LOGIN_FAIL: 로그인 실패(캡차/2FA 의심) — 사람 개입 필요');
-    }
+    await naverLogin(page);
 
     await page.goto(`https://blog.naver.com/${NAVER_BLOG_ID}?Redirect=Write`);
     await page.waitForLoadState('networkidle');
 
-    // 2026-11-11 aside로 실제 DOM 검증 완료(읽기 전용 조회). 제목/본문 선택자 교체.
+    // 셀렉터는 2026-11 실제 에디터 DOM에서 확인(해시 붙은 CSS 클래스 대신 data 속성 사용).
     const frame = page.frameLocator('iframe#mainFrame');
-    await frame.locator('.se-documentTitle .se-title-text').click();
-    await page.keyboard.type(postTitle, { delay: 30 });
-    await frame.locator('.se-component.se-text').first().click();
-    await page.keyboard.type(body, { delay: 5 });
+    // 도움말 오버레이가 뜨면 닫는다(없으면 무시)
+    await frame.getByRole('button', { name: '닫기' }).first().click({ timeout: 3000 }).catch(() => {});
+    // 이전 발행이 중간에 끊겨 자동저장된 임시글이 있으면 복원 팝업이 뜬다 -> 취소(새 글로 시작)
+    await frame.getByRole('button', { name: '취소', exact: true }).click({ timeout: 3000 }).catch(() => {});
 
-    if (imageUrl) {
-      // TODO: 이미지 삽입 버튼은 frame.locator('button[data-name="image"]')로 식별됨.
-      // 업로드/URL 입력 다이얼로그 흐름은 아직 조사 안 함 — 별도 구현 필요.
+    await frame.locator('.se-documentTitle .se-text-paragraph').click();
+    await page.keyboard.type(keyword, { delay: 10 });
+    await frame.locator('[data-a11y-title="본문"] .se-text-paragraph').first().click();
+    await page.keyboard.type(body, { delay: 2 });
+
+    // imageUrl은 n8n이 보내는 data URI(base64 JPEG). 파일 선택창에 버퍼로 주입.
+    const m = imageUrl && /^data:(image\/\w+);base64,(.+)$/.exec(imageUrl);
+    if (m) {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser'),
+        frame.locator('button[data-name="image"][data-group="documentToolbar"]').click(),
+      ]);
+      await chooser.setFiles({ name: 'image.jpg', mimeType: m[1], buffer: Buffer.from(m[2], 'base64') });
+      await page.waitForTimeout(3000); // 업로드 완료 대기
     }
 
-    // 카테고리(frame.locator('.se-flayer-unified-category-dropdown-trigger')) /
-    // 발행(frame.locator('.publish_btn__v_kS9')) 선택자는 확인했으나 실제 클릭 테스트는 안 했다.
-    // 발행 버튼 클릭이 검증되기 전까지는 성공으로 끝내면 안 된다 — 발행 안 된 글을
-    // 발행된 것으로 기록해 키워드 소진/중복발행 방지 로직이 오작동하는 사고 방지.
-    throw new Error('PUBLISH_NOT_IMPLEMENTED: 카테고리 선택/발행 버튼 클릭은 선택자만 확인됐고 실제 클릭 검증이 안 됐습니다 — 운영자가 1회 감독 하에 테스트 후 구현 필요(SETUP.md §5 참조)');
+    // ponytail: 카테고리는 기본값 사용. 지정 필요 시 발행 패널의 '.option_category__* button'(해시 클래스) 클릭 추가.
+    await frame.locator('button[data-click-area="tpb.publish"]').click();
+    // 테스트용: visibility === 'private'이면 비공개로 발행(기본은 패널 기본값=전체공개)
+    if (visibility === 'private') await frame.locator('label[for="open_private"]').click();
+    await frame.locator('button[data-testid="seOnePublishBtn"]').click();
+    // 발행 성공 = 글 보기 URL(logNo)로 이동. 안 되면 실패로 처리(발행 안 된 글을 성공 기록하지 않기 위함).
+    await page.waitForURL(/logNo=|\/\d{6,}/, { timeout: 30000 });
+    res.status(200).json({ ok: true, url: page.url() });
   } catch (err) {
     res.status(500).json({ error: String((err && err.message) || err) });
   } finally {
