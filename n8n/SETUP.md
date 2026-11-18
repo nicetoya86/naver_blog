@@ -81,11 +81,11 @@ Vercel 배포 시 `vercel/package.json`의 `playwright-core`/`@sparticuz/chromiu
 
 | Credential | 종류 | 용도 |
 |---|---|---|
-| `gemini-naver-blog` | HTTP Header Auth 또는 Custom | Gemini API 키(`geminiApi.apiKey`) — 본문 생성과 이미지 생성 두 노드가 공유 |
+| `nim-naver-blog` | HTTP Header Auth | NVIDIA NIM API 키 (`Authorization: Bearer <키>`) — 본문·다듬기·이미지 공용 |
 | `telegram-naver-blog` | Telegram API | 체크리스트 탈락 알림 (module-1과 동일 Credential 재사용) |
 
-두 HTTP Request 노드("Gemini 본문 생성", "Gemini 이미지 생성")는 동일한 Gemini Credential을 공유하도록 구성돼 있다(n8n의 Generic Credential Type `httpHeaderAuth`). n8n UI에서 HTTP Header Auth credential을 하나 만들고:
-- `gemini-naver-blog`: Header Name `x-goog-api-key`, Header Value = 실제 Gemini API 키
+두 HTTP Request 노드("본문 생성 (NIM)", "NIM 이미지 생성")는 n8n의 Generic Credential Type(`httpHeaderAuth`)을 쓰도록 구성돼 있다. n8n UI에서 각각 HTTP Header Auth credential을 만들고:
+- `nim-naver-blog`: Header Name `Authorization`, Header Value = `Bearer <실제 NIM API 키>`
 
 만든 뒤 해당 HTTP Request 노드를 열어 Credential을 위 이름으로 연결(워크플로우 JSON의 `id: "TBD"`를 n8n UI에서 실제 credential로 교체, Telegram credential과 동일한 방식).
 
@@ -115,14 +115,13 @@ Vercel 배포 시 `vercel/package.json`의 `playwright-core`/`@sparticuz/chromiu
 - `vercel/api/publish.js`: 스마트에디터 ONE 셀렉터(제목/본문/이미지/발행 패널/최종 발행)는 실제 DOM에서 확인해 구현했다(카테고리는 기본값). **단, 실발행 런타임 테스트는 미수행** — Vercel IP에서 네이버 로그인이 캡차/2FA로 막힐 수 있고(`LOGIN_FAIL`), 에디터 셀렉터는 네이버 배포로 바뀔 수 있다. 첫 실행은 반드시 수동 1회로 검증하고, 검증 전에는 Cron을 켜지 말 것. 발행 성공은 글 URL로 이동했을 때만 `{ok:true}`를 반환한다.
 - **비공개 시험 모드**: "Playwright 발행" 노드 jsonBody에 `visibility: 'private'`가 들어 있어 현재 모든 발행이 비공개다. 수동 검증 통과 후 이 필드를 제거하면 전체공개로 발행된다.
 - 체크리스트의 "타 사이트 문장 유사도" 검사 — 외부 표절 검사 API(예: Copyscape) 연동 필요, 현재는 항상 통과 처리
-- **이미지 생성**: NVIDIA 호스팅 Qwen-Image는 없고(셀프호스팅 전용), 호스팅 FLUX.1-schnell은 요청이 응답 없이 끊겨(2026-11 실측, 90초 이상 무응답) Gemini 이미지 생성(`gemini-2.5-flash-image`, 기존 Gemini credential)으로 교체했다. NIM credential/키는 더 이상 쓰지 않는다.
-- **이미지 N장 생성** (2026-11-11 네이버 상위노출 경쟁글 벤치마킹 반영): "이미지 N장 분할 준비" 노드가 본문 문단 수에 맞춰 최대 4장까지 생성 요청을 분기(n8n이 아이템 단위로 반복 실행하는 특성 이용)하고, "이미지 수집" 노드가 `candidates[0].content.parts[].inlineData`(base64) 응답들을 data URI 배열로 모아 `imageUrls`로 전달한다. `vercel/api/publish.js`는 이 배열을 받아 본문 문단 사이사이에 고르게 분산 삽입한다(경쟁글처럼 텍스트-이미지 교차 배치).
+- **이미지 생성(2026-11-19 NIM 복귀)**: NVIDIA 호스팅 Qwen-Image는 없다(셀프호스팅 전용). 호스팅 `black-forest-labs/flux.1-schnell`(상업 이용 허용)을 쓴다. 11월 초 무응답은 재현되지 않았고 4.8초에 200 응답을 확인했다. 요청 body는 `{prompt,width,height,steps}`만 허용(`seed` 넣으면 422). 응답 `artifacts[0].base64`(JPEG)를 체크리스트 노드가 data URI로 변환해 `imageUrl`로 전달한다. credential `nim-naver-blog`(Header `Authorization: Bearer <NIM 키>`)를 n8n에 만들어 이미지 노드에 연결해야 한다. 응답 없음이 재발하면 Gemini 이미지(`gemini-2.5-flash-image`)로 되돌린다.
 - `제휴비중 게이트` 노드는 플래그만 결정하며, 실제 상품 링크/이미지 삽입은 쇼핑커넥트 연동 후 구현(§module-4 참조)
 
 ### 6. 동작 확인
 
 1. keywordPool 채운 뒤 워크플로우 수동 실행
-2. Gemini 본문/이미지 생성 노드 응답에 실제 본문 텍스트와 이미지(base64) 데이터가 오는지 확인
+2. NIM 노드 응답에 실제 본문/이미지 URL이 오는지 확인
 3. 체크리스트 노드 출력의 `checks`, `passed` 값 확인
 4. `lastPublishedDate`는 Static Data에서, `emergencyBrake`는 module-1 §3.1에서 설정한 Vercel Edge Config를 통해 공유된다 — "공유상태 읽기" 노드 출력에 `emergencyBrake: true`가 찍히는지로 확인(module-1 §6-5 참조. 과거 공유 파일 방식 아님에 주의)
 
@@ -155,6 +154,6 @@ n8n UI → 워크플로우 설정 → Static Data에서:
 
 1. 쇼핑 커넥트 승인 완료
 2. `vercel/api/publish.js`의 TODO(제휴비중 게이트 — module-4 주석) 부분에서 `isAffiliatePost` 분기로 셀러 제공 이미지/링크 삽입 구현
-3. Gemini 본문 생성 프롬프트도 `isAffiliatePost`에 따라 후기·추천형 어투로 분기(현재는 정보성 프롬프트 고정)
+3. NIM 본문 생성 프롬프트도 `isAffiliatePost`에 따라 후기·추천형 어투로 분기(현재는 정보성 프롬프트 고정)
 
 Design 참조: [naver-blog-shopping-connect.design.md](../docs/02-design/features/naver-blog-shopping-connect.design.md)

@@ -8,7 +8,7 @@ version: 1.3
 > **Summary**: n8n 2-워크플로우(daily-publish, monitor-alert) 구조로 신생 블로그 콘텐츠 자동 발행과 저품질 모니터링을 분리 구현한다.
 >
 > **Project**: naver_blog
-> **Version**: 0.1
+> **Version**: 0.2 (2026-11-19: NIM 본문, FR-14~16 노드 설계 추가)
 > **Author**: 장대광
 > **Date**: 2026-10-28
 > **Status**: Draft
@@ -74,7 +74,7 @@ version: 1.3
 │  (Cron, 요일별 지터)      │        │  (Cron, 매일 1회)        │
 ├──────────────────────┤        ├──────────────────────┤
 │ 1.키워드수집(데이터랩)     │        │ 1.블로그 통계 수집        │
-│ 2.본문생성(Gemini)       │        │ 2.전일대비 급락(50%↑) 판정 │
+│ 2.본문생성(NIM)       │        │ 2.전일대비 급락(50%↑) 판정 │
 │ 3.이미지생성(NIM)        │        │ 3.텔레그램 알림           │
 │ 4.발행전체크리스트(Func)  │        │ 4.긴급브레이크 플래그 ON   │
 │ 5.로드맵단계 비중 게이트   │        │   (daily-publish가 참조)  │
@@ -98,8 +98,9 @@ version: 1.3
 ```
 [daily-publish]
 Cron(지터) → 긴급브레이크 플래그 확인(ON이면 중단) → 당일발행 플래그 확인(이미 발행시 중단)
-→ 키워드 수집 → Gemini 본문 생성 → NIM 이미지 생성
-→ 체크리스트 검증(Fail시 발행 중단+알림) → 제휴 비중 게이트(로드맵 단계 조회)
+→ 키워드 수집 → 본문 생성(NIM nemotron) → 본문 추출(imagePrompt 분리)
+→ 맞춤법·번역체 다듬기(NIM)+가드(FR-16) → 이미지 생성(NIM flux.1-schnell)
+→ 체크리스트 100점제(임계 70, FR-14; 미달시 중단+알림; 재생성 루프는 YAGNI로 보류) → 제휴 비중 게이트(로드맵 단계 조회)
 → Playwright 발행 → 당일발행 플래그 기록
 
 [monitor-alert]
@@ -114,7 +115,7 @@ Cron(매일 1회, 발행과 다른 시각) → 네이버 블로그 통계 조회
 | Component | Depends On | Purpose |
 |-----------|-----------|---------|
 | daily-publish | 공유 Static Data(긴급브레이크 플래그) | monitor-alert의 긴급 중단 신호 수신 |
-| daily-publish | Gemini API, NVIDIA NIM API | 본문·이미지 생성 |
+| daily-publish | NVIDIA NIM API(본문·이미지) | 본문·이미지 생성 |
 | daily-publish | Playwright(네이버 블로그 로그인 세션) | 실제 발행 |
 | monitor-alert | 네이버 블로그 통계(크롤링 또는 통계 페이지 Playwright 조회) | 방문자/검색유입 수치 |
 | monitor-alert | 텔레그램 Bot API | 알림 발송 |
@@ -160,9 +161,11 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 | 2 | 긴급브레이크 확인 | IF | `emergencyBrake === true`면 워크플로우 종료 |
 | 3 | 중복발행 확인 | IF | `lastPublishedDate === today`면 종료 |
 | 4 | 키워드 수집 | HTTP Request / Function | 네이버 데이터랩·자동완성 API 또는 크롤링 |
-| 5 | 본문 생성 | HTTP Request(Gemini API) | 매번 다른 구조/어투 프롬프트 변주 |
-| 6 | 이미지 생성 | HTTP Request(Gemini 이미지; NIM Qwen-Image/FLUX는 호스팅 불가로 교체) | 지수성장기: 개념 이미지, 쇼핑커넥트 이후: 셀러 제공 이미지로 분기 |
-| 7 | 발행전 체크리스트 | Function | 최소 글자수/사진개수/유사도/키워드반복 검사 → Fail시 중단+텔레그램 알림 |
+| 5 | 본문 생성 (NIM) `http-gemini` | HTTP Request(NIM nemotron-3-ultra, enable_thinking:false) | 변주 프롬프트 + FR-15 기준(§4.4.2) + 마지막 `IMG:` 영문 줄 |
+| 5a | 맞춤법·번역체 다듬기 (신규, 추출 뒤) + 다듬기 가드(Code) | HTTP Request(NIM, 동일 모델) | §4.4.3 humanizer 규칙 프롬프트. 변경률 상한 초과시 원문 유지 |
+| 5b | 본문 추출 `code-extract-body` (5 직후, 5a 앞) | Code | 제로폭 제거, `IMG:`→imagePrompt 분리, 소제목 앞 빈 줄 보장 |
+| 6 | 이미지 생성 (NIM) | HTTP Request(NIM flux.1-schnell, seed 없음) | `artifacts[0].base64`, imagePrompt 사용, retry 3회. dev 금지(비상업) |
+| 7 | 발행전 체크리스트 | Code | §4.4.1 100점 채점(임계 70) + 하드 Fail(외부링크·금지 제목어·유사도) → 미달시 즉시 중단+텔레그램 알림(재생성 루프는 YAGNI 보류, §2.2) |
 | 8 | 제휴비중 게이트 | Function | `affiliateRatio` 조회해 이번 글을 정보성/제휴성 중 무엇으로 생성할지 결정 |
 | 9 | Playwright 발행 | HTTP Request(`vercel/api/publish.js`) | n8n Cloud가 Execute Command 미지원이라 Vercel 서버리스로 이전. 네이버 IP 차단으로 로컬 PC+cloudflared 터널에서 구동(§11.1, SETUP.md §5.1) |
 | 10 | 상태 기록 | Function | `lastPublishedDate` 갱신 |
@@ -177,6 +180,36 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 | 4 | 텔레그램 알림 | HTTP Request(Telegram Bot API) | 급락 시 알림 발송 |
 | 5 | 긴급브레이크 설정 | Function | 급락 시 `emergencyBrake = true` 기록 |
 | 6 | 상태 저장 | Function | `lastStats` 갱신 |
+
+### 4.4 품질 노드 상세 (FR-14~16, OSS 실측 반영)
+
+> 근거: doric9/naver-blog-seo(루브릭), solo-skills `naver-howto-post`(기준값), k-skill `korean-humanizer`(규칙). 코드 포팅이 아닌 **기준 이식** — doric9는 프롬프트 라이브러리, korean-spell-check는 외부 Nara 맞춤법 검사기 호출이라 자동화 노드로 부적합.
+
+#### 4.4.1 체크리스트 100점제 (FR-14, JS 규칙 기반)
+
+| 항목 | 배점 | 규칙(자동 판정) |
+|------|:---:|-----------------|
+| 글자수 | 15 | 공백 제외 1,200~1,800자 만점, ±20% 이내 절반, 그 외 0 |
+| 제목 | 20 | 핵심키워드 앞 배치, 금지어("완벽 가이드"/"총정리"/"꿀팁 Zip") 없음, 제목 단어가 본문에 등장 |
+| 본문 구조 | 20 | 소제목 3개 이상(질문형 1개+), 문단 3~4줄 이하, 서론-본론-결론 |
+| 키워드 배치 | 15 | 키워드 토큰 최다 출현 3~15회 만점, 1~20회 절반(nemotron 실측으로 상한 완화). 태그 채점은 YAGNI로 제외 |
+| 콘텐츠 품질 | 20 | 문장 중복·반복 어미 비율, 수치/구체 정보 포함 여부, 번역체 패턴 수 |
+| CTA/마무리 | 10 | 마무리 요약 또는 질문 1줄, 외부 링크 0개 |
+
+- 임계 70점. 하드 Fail(점수 무관): 외부 링크 포함, 금지 제목어, 이미지 base64 없음.
+- 이미지 개수(15~25)는 sanity 하한만(PRD 11-19: 숫자 공식보다 깊이) — 현재 1장은 경고만.
+- 출력: `{score, breakdown, fails[]}` → IF 노드로 재생성/중단 분기.
+
+#### 4.4.2 본문 프롬프트 기준 (FR-15)
+
+제목 금지어, 길이 1,200~1,800자, 소제목 앞 빈 줄 1개, 서로 다른 조건은 문장 분리, 과강한 동사 지양("들어내어"→"들어 올려"), 외부 링크 금지, 태그 3~5개 제안. 마지막 줄 `IMG: <영어 장면>`.
+
+#### 4.4.3 맞춤법·번역체 다듬기 (FR-16, humanizer 이식)
+
+- NIM 프롬프트 노드. 규칙: ① 의미 불변 ② 근거 있는 수정만 ③ 장르(블로그 어투) 유지 ④ 과수정 금지.
+- 심각도 S1(오탈자·문법)/S2(번역체·어색한 조사)/S3(문체 취향, 수정 안 함). S1·S2만 수정.
+- 변경률 가드(Code 노드): 문자 변경률 30% 초과 경고, 50% 초과 시 원문 롤백. `IMG:` 줄은 그대로 통과.
+- Nara 맞춤법 검사기 미사용(비상업·개인용 제한, Cloudflare 403). 대체: LLM 교정. 노드 실패시 원문 통과(발행 차단 안 함).
 
 ### 4.3 에러 응답(알림 메시지) 포맷
 
@@ -207,6 +240,7 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 급락 감지: 텔레그램 알림 수신 → 운영자가 최근 글 검토 → 원인글 비공개 전환
          → 2주 발행빈도 주2~3회로 n8n Cron 수정 → emergencyBrake 수동 해제
 게이트 통과: 운영자가 로드맵 단계 확인 후 Static Data의 roadmapPhase 수동 전환
+준비기 게이트(포스팅 10개+): 텔레그램 알림(FR-12) → 운영자가 애드포스트 수동 신청 (자동화 없음, 코드 변경 없음)
 ```
 
 ### 5.3 Page UI Checklist
@@ -223,7 +257,7 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 |------|---------|-------|----------|
 | CHECKLIST_FAIL | 발행전 체크리스트 통과 실패 | 글자수/사진수/유사도/키워드반복 기준 미달 | 발행 중단, 텔레그램 알림, 해당 회차 스킵 |
 | LOGIN_FAIL | 네이버 로그인 실패 | 캡차/2FA/계정 잠김 | 발행 중단, 텔레그램 긴급 알림(사람 개입 필요) |
-| API_FAIL | Gemini/NIM API 오류 | 키 만료/레이트리밋 | 1회 재시도 후 실패 시 스킵+알림 |
+| API_FAIL | NIM API 오류 | 키 만료/레이트리밋 | 1회 재시도 후 실패 시 스킵+알림 |
 | STATS_FETCH_FAIL | 통계 수집 실패 | 네이버 통계 페이지 구조 변경 등 | 알림만 발송, emergencyBrake 변경 안 함(오탐 방지) |
 
 ### 6.2 알림 포맷
@@ -234,11 +268,11 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 
 ## 7. Security Considerations
 
-- [ ] API 키(Gemini/NIM/Telegram)는 n8n Credentials에만 저장, 워크플로우 JSON export 시 평문 노출 금지
+- [ ] API 키(NIM/Telegram)는 n8n Credentials에만 저장, 워크플로우 JSON export 시 평문 노출 금지
 - [ ] 네이버 자동화 계정 비밀번호는 n8n Credentials 암호화 저장, 코드/문서에 평문 기재 금지
 - [ ] FLUX 사용 시 schnell(상업적 허용)만 사용 — dev 버전(비상업 라이선스) 노드 설정 차단
 - [ ] 타인 사진 무단 재업로드 금지 — 이미지 소스는 NIM 생성/셀러 제공 공식 이미지로 제한
-- [ ] Rate Limiting: Gemini/NIM 호출 실패 시 무한 재시도 금지(최대 1회 재시도)
+- [ ] Rate Limiting: NIM 호출 실패 시 무한 재시도 금지(최대 1회 재시도)
 
 ---
 
@@ -248,7 +282,7 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 
 | Type | Target | Tool | Phase |
 |------|--------|------|-------|
-| L1: 노드 단위 테스트 | 각 HTTP Request 노드(Gemini/NIM/Telegram) | n8n 수동 실행(Execute Node) | Do |
+| L1: 노드 단위 테스트 | 각 HTTP Request 노드(NIM/Telegram) | n8n 수동 실행(Execute Node) | Do |
 | L2: 워크플로우 액션 테스트 | 체크리스트 Fail/Pass 분기, 제휴비중 게이트 분기 | n8n Pin Data + 수동 실행 | Do |
 | L3: E2E 시나리오 | 전체 발행 1회전, 급락 감지→알림→브레이크 1회전 | n8n 수동 트리거 + Playwright 비-headless 관찰 | Do |
 
@@ -256,10 +290,13 @@ DB 신규 구축 없이 n8n Workflow Static Data(`$getWorkflowStaticData('global
 
 | # | 노드 | 테스트 설명 | 기대 결과 |
 |---|------|-------------|-----------|
-| 1 | Gemini 본문생성 | 키워드 1개로 본문 생성 호출 | 본문 텍스트 반환, 500자 이상 |
+| 1 | NIM 본문생성 | 키워드 1개로 본문 생성 호출 | 본문 텍스트 반환, 500자 이상 |
 | 2 | NIM 이미지생성 | 프롬프트 1개로 이미지 생성 호출 | 이미지 URL/파일 반환 |
 | 3 | Telegram 알림 | 테스트 메시지 발송 | 텔레그램 채팅에 메시지 도착 |
 | 4 | 발행전 체크리스트 | 글자수 부족 데이터 입력 | Fail 반환, 발행 노드로 진행 안 함 |
+| 5 | 체크리스트 점수 | 금지 제목어("총정리") 포함 샘플 / 정상 샘플 | 전자: 하드 Fail, 후자: 70점 이상 |
+| 6 | 다듬기 노드 | 오탈자·번역체 샘플 + 이미 깨끗한 샘플 | 전자 수정됨, 후자 변경률 <5%, 50% 초과시 롤백 |
+| 7 | 본문 품질 | 시험 WF 비공개 발행 2회 | 조건문 분리·소제목 앞 빈 줄·부자연 동사 없음(사람 확인, FR-13) |
 
 ### 8.3 L2: 워크플로우 액션 테스트
 
@@ -295,7 +332,7 @@ n8n 워크플로우 자동화 프로젝트 특성상 Presentation/Application/Do
 |------|---------------------|
 | 트리거/스케줄링 | 각 워크플로우의 Schedule Trigger 노드 |
 | 비즈니스 규칙(게이트, 체크리스트) | Function 노드 |
-| 외부 연동(Gemini/NIM/Telegram/Playwright) | HTTP Request / Execute Command 노드 |
+| 외부 연동(NIM/Telegram/Playwright) | HTTP Request / Execute Command 노드 |
 | 상태 저장 | n8n Static Data |
 
 ---
@@ -307,7 +344,7 @@ n8n 워크플로우 자동화 프로젝트 특성상 Presentation/Application/Do
 | 대상 | 규칙 | 예시 |
 |------|------|------|
 | 워크플로우명 | kebab-case, `naver-blog-{역할}` | `naver-blog-daily-publish`, `naver-blog-monitor-alert` |
-| n8n Credentials명 | `{서비스명}-naver-blog` | `gemini-naver-blog`, `telegram-naver-blog` |
+| n8n Credentials명 | `{서비스명}-naver-blog` | `nim-naver-blog`, `telegram-naver-blog` |
 | Function 노드명 | 역할을 한국어로 명확히 | "발행전 체크리스트", "급락 판정" |
 
 ### 10.2 Credentials 관리
@@ -349,11 +386,12 @@ vercel/
 ### 11.2 Implementation Order
 
 1. [ ] monitor-alert 워크플로우 먼저 구축(통계 수집 → 급락 판정 → 텔레그램 알림) — 독립적이라 먼저 검증 가능
-2. [ ] daily-publish: 키워드 수집 → Gemini 본문 생성 → NIM 이미지 생성 (콘텐츠 생성 체인)
+2. [ ] daily-publish: 키워드 수집 → NIM 본문 생성 → NIM 이미지 생성 (콘텐츠 생성 체인)
 3. [ ] daily-publish: 발행전 체크리스트 Function 노드
 4. [ ] daily-publish: Playwright 발행 스크립트 + 지터/중복방지
 5. [ ] 제휴비중 게이트 + 로드맵 단계 Static Data 연동
 6. [ ] emergencyBrake 연동 테스트(monitor-alert ↔ daily-publish)
+7. [ ] (v0.2) 시험 WF `xNrXrcyImWrcjC21`에 §4.4 적용: 체크리스트 100점제 → 다듬기 노드 → 비공개 발행 1~2회 → 운영 WF(`KyMi8Nw6RA8waY6i`, `tocdpbqOCXGybmI6`) 반영
 
 ### 11.3 Session Guide
 
@@ -362,7 +400,7 @@ vercel/
 | Module | Scope Key | Description | Estimated Turns |
 |--------|-----------|--------------|:---------------:|
 | 모니터링 워크플로우 | `module-1` | monitor-alert: 통계수집+급락감지+텔레그램 | 15-20 |
-| 콘텐츠 생성 체인 | `module-2` | 키워드수집+Gemini본문+NIM이미지 | 20-25 |
+| 콘텐츠 생성 체인 | `module-2` | 키워드수집+NIM본문+NIM이미지 | 20-25 |
 | 발행 가드+Playwright | `module-3` | 체크리스트+지터+중복방지+실제발행 | 25-30 |
 | 로드맵 게이트 연동 | `module-4` | affiliateRatio 게이트, emergencyBrake 연동 | 10-15 |
 
@@ -384,3 +422,4 @@ vercel/
 |---------|------|---------|--------|
 | 0.2 | 2026-11-11 | Vercel 전환 + 로컬/터널 실행 전환을 문서에 반영(§2.1, §3.3, §4.1, §11.1) — analysis.md §8 Decision Record 갱신 대응 | Claude |
 | 0.1 | 2026-10-28 | 최초 작성 (Option C 선택) | 장대광 |
+| 0.2.1 | 2026-11-19 | Gap 분석 반영: Gemini 잔존 제거, 재생성 루프 보류·키워드 범위·태그 채점 제외 명시 |
